@@ -23,8 +23,9 @@ app.use('/common', commonRouter);
 
 
 app.get('/', (req, res) => {
-  res.sendStatus(200,"Please visit www.magicmenu.in);
+  res.status(200).send('Please visit www.magicmenu.in');
 });
+
 
 
 
