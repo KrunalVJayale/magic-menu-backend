@@ -217,6 +217,35 @@ module.exports.profile = async (req, res) => {
   res.send(data);
 };
 
+module.exports.registerFCM = async (req, res) => {
+  const { id } = req.params;
+  const { token } = req.body;
+
+  try {
+    const customer = await Customer.findById(id);
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    // Ensure fcmToken is initialized
+    if (!Array.isArray(customer.fcmToken)) {
+      customer.fcmToken = [];
+    }
+
+    // Add token only if it doesn't already exist
+    if (!customer.fcmToken.includes(token)) {
+      customer.fcmToken.push(token);
+      await customer.save();
+    }
+
+    return res.status(200).json({ message: "FCM Token saved successfully" });
+  } catch (error) {
+    console.error("Error saving FCM token:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
 module.exports.categorySuggestion = async (req, res) => {
   const { category } = req.params;
   let data = await Category.find({
@@ -451,59 +480,51 @@ module.exports.addAddress = async (req, res) => {
 // Live-Order Route
 module.exports.liveOrder = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id, orderId } = req.params;
 
-    if (!id) {
-      return res.status(400).json({ error: "Customer ID (_id) is required" });
+    if (!id || !orderId) {
+      return res.status(400).json({ error: "Customer ID and Order ID are required" });
     }
 
-    const data = await LiveOrder.find({ customer: id }).populate({
+    const order = await LiveOrder.findOne({ customer: id, _id: orderId }).populate({
       path: "customer",
-      select: "-password", // Exclude the password field
+      select: "-password", // Exclude password
     });
 
-    if (!data || data.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "No past orders found for this customer." });
+    if (!order) {
+      return res.status(404).json({ message: "Live order not found." });
     }
 
-    const hotelLocation = await Owner.findById(data[0].hotel);
+    const hotelLocation = await Owner.findById(order.hotel);
     const { latitude: lat1, longitude: lon1 } = hotelLocation.location;
-    const averageSpeed = 25; // Adjust based on your area (km/h)
+    const { latitude: lat2, longitude: lon2 } = order.customer.location[order.locationIndex];
 
-    const dataWithDistanceAndTime = await Promise.all(
-      data.map(async (order) => {
-        const { latitude: lat2, longitude: lon2 } =
-          order.customer.location[order.locationIndex];
-        const distance = calculateDistance(lat1, lon1, lat2, lon2).toFixed(2);
-        const estimatedDeliveryTime = ((distance / averageSpeed) * 60).toFixed(
-          2
-        );
+    const distance = calculateDistance(lat1, lon1, lat2, lon2).toFixed(2);
+    const averageSpeed = 25; // km/h
+    const estimatedDeliveryTime = ((distance / averageSpeed) * 60 + 10).toFixed(2); // in minutes
 
-        let riderData = null;
-        if (order.rider) {
-          const rider = await Rider.findById(order.rider).select("name number");
-          if (rider) {
-            riderData = {
-              name: rider.name,
-              number: rider.number,
-            };
-          }
-        }
-
-        return {
-          ...order.toObject(),
-          distance,
-          estimatedDeliveryTime: Math.round(estimatedDeliveryTime),
-          rider: riderData,
+    let riderData = null;
+    if (order.rider) {
+      const rider = await Rider.findById(order.rider).select("name number");
+      if (rider) {
+        riderData = {
+          name: rider.name,
+          number: rider.number,
         };
-      })
-    );
+      }
+    }
 
-    res.status(200).json(dataWithDistanceAndTime);
+    const orderWithExtras = {
+      ...order.toObject(),
+      distance,
+      estimatedDeliveryTime: Math.round(estimatedDeliveryTime),
+      rider: riderData,
+    };
+
+    // ✅ Return an array with one object to keep frontend unchanged
+    res.status(200).json([orderWithExtras]);
   } catch (error) {
-    console.error("Error fetching past orders:", error);
+    console.error("Error fetching live order:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -521,7 +542,7 @@ module.exports.liveOrderStatus = async (req, res) => {
     if (!data || data.length === 0) {
       return res.status(404).json({message:'No order found'});
     } else {
-      return res.status(200).json(true);
+      return res.status(200).json(data);
     }
   } catch (error) {
     console.error("Error fetching past orders:", error);
@@ -708,7 +729,7 @@ module.exports.paymentConfirm = async (req, res) => {
       items: orderItems.map((i) => ({ item: i._id, quantity: i.quantity })),
       totalPrice: amount,
     };
-    await LiveOrder.create([orderData], { session });
+    const [createdOrder] = await LiveOrder.create([orderData], { session });
 
     // 3. Gather tokens
     const riders = await Rider.find({ onDuty: true, isAvailable: true }, null, {
@@ -792,7 +813,7 @@ module.exports.paymentConfirm = async (req, res) => {
     session.endSession();
     return res
       .status(200)
-      .json({ status: "SUCCESS", message: "Order placed and riders notified" });
+      .json({ status: "SUCCESS",id:createdOrder._id, message: "Order placed and riders notified" });
   } catch (err) {
     await session.abortTransaction();
     session.endSession();

@@ -21,7 +21,8 @@ const {
   liveOrderStatus,
   liveOrderCancel,
   updateDefault,
-  deleteAddress
+  deleteAddress,
+  registerFCM
 } = require("../controllers/customer");
 const wrapAsync = require("../utils/wrapAsync");
 const authMiddleware = require("../utils/jwtAuth");
@@ -38,6 +39,7 @@ router.post("/login", wrapAsync(login));
 
 // Protected Routes (authentication required)
 router.get("/:id/profile", authMiddleware, wrapAsync(profile)); // Only authenticated users can access profile
+router.post('/:id/fcm-token',authMiddleware,wrapAsync(registerFCM));
 router.get("/:id/address", authMiddleware, wrapAsync(allAddress)); // Only authenticated users can access address data
 router.get("/:id/address/:addressId/update-default", authMiddleware, wrapAsync(updateDefault)); // Only authenticated users can access address data
 router.post("/address", authMiddleware, wrapAsync(addAddress)); // Only authenticated users can add an address
@@ -45,7 +47,7 @@ router.post("/address/update", authMiddleware, wrapAsync(updateAddress)); // Onl
 router.get("/:id/address/:addressId/delete-address", authMiddleware, wrapAsync(deleteAddress)); // Only authenticated users can update an address
 // router.post("/order", authMiddleware, wrapAsync(order)); // Only authenticated users can update an address
 router.get("/:id/past-order", authMiddleware, wrapAsync(pastOrder)); // Only authenticated users can see past orders
-router.get("/:id/live-order", authMiddleware, wrapAsync(liveOrder)); // Only authenticated users can see live orders
+router.get("/:id/live-order/orderId", authMiddleware, wrapAsync(liveOrder)); // Only authenticated users can see live orders
 router.get("/:id/status/live-order", authMiddleware, wrapAsync(liveOrderStatus)); // Only authenticated users can see live orders
 
 

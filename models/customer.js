@@ -8,6 +8,7 @@ const customerSchema = new Schema(
     email: { type: String, required: true },
     password: { type: String, required: true },
     gender: { type: String},
+    fcmToken:[String],
     location: [
       {
         title: { type: String, required: true },
