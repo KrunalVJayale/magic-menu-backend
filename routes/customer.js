@@ -47,7 +47,7 @@ router.post("/address/update", authMiddleware, wrapAsync(updateAddress)); // Onl
 router.get("/:id/address/:addressId/delete-address", authMiddleware, wrapAsync(deleteAddress)); // Only authenticated users can update an address
 // router.post("/order", authMiddleware, wrapAsync(order)); // Only authenticated users can update an address
 router.get("/:id/past-order", authMiddleware, wrapAsync(pastOrder)); // Only authenticated users can see past orders
-router.get("/:id/live-order/orderId", authMiddleware, wrapAsync(liveOrder)); // Only authenticated users can see live orders
+router.get("/:id/live-order/:orderId", authMiddleware, wrapAsync(liveOrder)); // Only authenticated users can see live orders
 router.get("/:id/status/live-order", authMiddleware, wrapAsync(liveOrderStatus)); // Only authenticated users can see live orders
 
 
