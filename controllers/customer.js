@@ -90,8 +90,8 @@ module.exports.hotelData = async (req, res) => {
     );
     if (!defaultLocation) {
       return res
-        .status(404)
-        .send({ error: "Default location not found for the customer." });
+        .status(200)
+        .send(hotelData);
     }
 
     // Calculating distance and estimated time
