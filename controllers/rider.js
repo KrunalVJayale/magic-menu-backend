@@ -651,7 +651,7 @@ module.exports.sendTestNotification = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const rider = await Rider.findById(id);
+    const rider = await Customer.findById(id);
 
     if (!rider || !rider.fcmToken?.length) {
       return res.status(404).json({ message: "Rider or token not found" });

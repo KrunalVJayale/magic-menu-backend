@@ -19,8 +19,53 @@ const admin = require("../config/firebaseAdmin");
 // const { initiatePayment } = require("../utils/paymentHandler");
 
 module.exports.data = async (req, res) => {
-  let data = await Owner.find({ isServing: true });
-  res.send(data);
+  const { user_id } = req.params;
+
+  // 1. Fetch the customer
+  const customer = await Customer.findById(user_id);
+  if (!customer) {
+    return res.status(404).json({ error: 'Customer not found' });
+  }
+
+  // 2. Look for a default location
+  const defaultLoc = Array.isArray(customer.location)
+    ? customer.location.find(loc => loc.isDefault)
+    : null;
+
+  // 3. Fetch all serving owners
+  const owners = await Owner.find({ isServing: true });
+
+  // 4. If no default location, send the raw owners data
+  if (!defaultLoc) {
+    return res.status(200).json(owners);
+  }
+
+  // 5. Now that we know defaultLoc exists, destructure safely
+  const { latitude: custLat, longitude: custLon } = defaultLoc;
+
+  // 6. Compute delivery times per owner
+  const enrichedOwners = owners.map(ownerDoc => {
+    const owner = ownerDoc.toObject();
+    const { latitude: ownLat, longitude: ownLon } = owner.location || {};
+
+    // If an owner somehow lacks coords, skip the calculation and return raw
+    if (ownLat == null || ownLon == null) {
+      return owner;
+    }
+
+    const distanceKm = calculateDistance(custLat, custLon, ownLat, ownLon);
+    const travelTimeMin = (distanceKm / 25) * 60;
+    const deliveryTimeMin = Math.round(travelTimeMin + 10);
+
+    return {
+      ...owner,
+      distanceKm: Math.round(distanceKm),
+      deliveryTimeMin
+    };
+  });
+
+  // 7. Send enriched data
+  res.status(200).json(enrichedOwners);
 };
 
 module.exports.hotelData = async (req, res) => {
@@ -483,10 +528,15 @@ module.exports.liveOrder = async (req, res) => {
     const { id, orderId } = req.params;
 
     if (!id || !orderId) {
-      return res.status(400).json({ error: "Customer ID and Order ID are required" });
+      return res
+        .status(400)
+        .json({ error: "Customer ID and Order ID are required" });
     }
 
-    const order = await LiveOrder.findOne({ customer: id, _id: orderId }).populate({
+    const order = await LiveOrder.findOne({
+      customer: id,
+      _id: orderId,
+    }).populate({
       path: "customer",
       select: "-password", // Exclude password
     });
@@ -497,11 +547,14 @@ module.exports.liveOrder = async (req, res) => {
 
     const hotelLocation = await Owner.findById(order.hotel);
     const { latitude: lat1, longitude: lon1 } = hotelLocation.location;
-    const { latitude: lat2, longitude: lon2 } = order.customer.location[order.locationIndex];
+    const { latitude: lat2, longitude: lon2 } =
+      order.customer.location[order.locationIndex];
 
     const distance = calculateDistance(lat1, lon1, lat2, lon2).toFixed(2);
     const averageSpeed = 25; // km/h
-    const estimatedDeliveryTime = ((distance / averageSpeed) * 60 + 10).toFixed(2); // in minutes
+    const estimatedDeliveryTime = ((distance / averageSpeed) * 60 + 10).toFixed(
+      2
+    ); // in minutes
 
     let riderData = null;
     if (order.rider) {
@@ -540,7 +593,7 @@ module.exports.liveOrderStatus = async (req, res) => {
 
     const data = await LiveOrder.find({ customer: id });
     if (!data || data.length === 0) {
-      return res.status(404).json({message:'No order found'});
+      return res.status(404).json({ message: "No order found" });
     } else {
       return res.status(200).json(data);
     }
@@ -813,7 +866,11 @@ module.exports.paymentConfirm = async (req, res) => {
     session.endSession();
     return res
       .status(200)
-      .json({ status: "SUCCESS",id:createdOrder._id, message: "Order placed and riders notified" });
+      .json({
+        status: "SUCCESS",
+        id: createdOrder._id,
+        message: "Order placed and riders notified",
+      });
   } catch (err) {
     await session.abortTransaction();
     session.endSession();

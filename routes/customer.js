@@ -30,7 +30,7 @@ const authMiddleware = require("../utils/jwtAuth");
 
 
 // Public Routes (no authentication required)
-router.get("/data", wrapAsync(data));
+router.get("/:user_id/data",wrapAsync(data));
 router.get("/:_id/:id/hotelData", wrapAsync(hotelData));
 router.get("/:id/listingData/:category", wrapAsync(listingData));
 router.post("/getotp", wrapAsync(getOTP));
