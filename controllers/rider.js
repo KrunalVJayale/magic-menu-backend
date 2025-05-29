@@ -333,32 +333,98 @@ module.exports.newOrder = async (req, res) => {
 module.exports.changeStatus = async (req, res) => {
   try {
     const { id, _id, status } = req.params;
-
     if (!id || !_id || !status) {
       return res
         .status(400)
         .json({ message: "Missing id, _id, or status parameter" });
     }
 
+    // 1️⃣ Claim or update the order
     const updated = await LiveOrder.findOneAndUpdate(
       {
         _id,
         $or: [
-          { rider: { $exists: false } }, // order not yet claimed
-          { rider: id }, // claimed by same rider
+          { rider: { $exists: false } }, // not yet claimed
+          { rider: id }, // already by this rider
         ],
       },
       { status, rider: id },
-      { new: false }
+      { new: true }
     );
-
     if (!updated) {
       return res
         .status(403)
         .json({ message: "Order already assigned to another rider" });
     }
 
-    // Set rider availability if it's a new assignment
+    // 2️⃣ Fetch customer FCM tokens
+    const customer = await Customer.findById(updated.customer);
+    const tokens = Array.isArray(customer.fcmTokens) ? customer.fcmTokens : [];
+
+    // 3️⃣ Only notify on these two statuses
+    const notifyStatuses = ["PICKEDUP", "DROP"];
+    if (notifyStatuses.includes(updated.status) && tokens.length) {
+      // 4️⃣ Build payload
+      let message;
+      if (updated.status === "PICKEDUP") {
+        message = {
+          tokens,
+          android: {
+            notification: {
+              title: "🍽️ Your food is on the way!",
+              body: "Our delivery partner has picked up your order and is heading to you.",
+              sound: "magicmenu_zing_enhanced",
+              channelId: "custom-sound-channel",
+            },
+          },
+          data: {
+            type: "ORDER_PICKED_UP",
+            title: "🍽️ Your food is on the way!",
+            body: "Our delivery partner has picked up your order and is heading to you.",
+          },
+        };
+      } else {
+        // DROP
+        message = {
+          tokens,
+          android: {
+            notification: {
+              title: "🏠 Your order has arrived!",
+              body: "Your food has arrived! Please collect it at your door.",
+              sound: "magicmenu_zing_enhanced",
+              channelId: "custom-sound-channel",
+            },
+          },
+          data: {
+            type: "ORDER_DELIVERED",
+            title: "🏠 Your order has arrived!",
+            body: "Your food has arrived! Please collect it at your door.",
+          },
+        };
+      }
+
+      // 5️⃣ Single-send block
+      if (typeof admin.messaging().sendMulticast === "function") {
+        await admin.messaging().sendMulticast(message);
+      } else {
+        await Promise.all(
+          tokens.map((token) =>
+            admin
+              .messaging()
+              .send({
+                token,
+                android: message.android,
+                data: message.data,
+              })
+              .catch((err) =>
+                console.error("FCM error for token", token, err.message)
+              )
+          )
+        );
+      }
+    }
+
+    // 6️⃣ Mark rider as busy
     await Rider.findByIdAndUpdate(id, {
       isAvailable: false,
       servingOrder: _id,
@@ -368,7 +434,7 @@ module.exports.changeStatus = async (req, res) => {
       .status(200)
       .json({ message: "Status and rider updated successfully" });
   } catch (error) {
-    console.error("Error updating order or rider:", error);
+    console.error("Error in changeStatus:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -699,7 +765,7 @@ module.exports.sendTestNotification = async (req, res) => {
           await admin.messaging().send({
             token,
             android: message.android,
-            data:message.data,
+            data: message.data,
           });
           return { token, success: true };
         } catch (err) {
