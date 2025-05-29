@@ -359,7 +359,7 @@ module.exports.changeStatus = async (req, res) => {
 
     // 2️⃣ Fetch customer FCM tokens
     const customer = await Customer.findById(updated.customer);
-    const tokens = Array.isArray(customer.fcmTokens) ? customer.fcmTokens : [];
+    const tokens = Array.isArray(customer.fcmToken) ? customer.fcmToken : [];
 
     // 3️⃣ Only notify on these two statuses
     const notifyStatuses = ["PICKEDUP", "DROP"];
