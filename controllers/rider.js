@@ -359,7 +359,7 @@ module.exports.changeStatus = async (req, res) => {
 
     // 2️⃣ Fetch customer FCM tokens
     const customer = await Customer.findById(updated.customer);
-    const tokens = Array.isArray(customer.fcmTokens) ? customer.fcmTokens : [];
+    const tokens = Array.isArray(customer.fcmToken) ? customer.fcmToken : [];
 
     // 3️⃣ Only notify on these two statuses
     const notifyStatuses = ["PICKEDUP", "DROP"];
@@ -576,9 +576,10 @@ module.exports.getCompleteOrderData = async (req, res) => {
     }
 
     const index = liveOrder.locationIndex ?? 0;
+
     const location = customer.location?.[index];
 
-    if (!location || !location.houseNo || !location.buildingNo) {
+    if (!location || location.houseNo == null || location.buildingNo == null) {
       return res.status(404).json({ message: "Customer location not found" });
     }
 
