@@ -359,7 +359,7 @@ module.exports.changeStatus = async (req, res) => {
 
     // 2️⃣ Fetch customer FCM tokens
     const customer = await Customer.findById(updated.customer);
-    const tokens = Array.isArray(customer.fcmToken) ? customer.fcmToken : [];
+    let tokens = Array.isArray(customer.fcmToken) ? customer.fcmToken : [];
 
     // 3️⃣ Only notify on these two statuses
     const notifyStatuses = ["PICKEDUP", "DROP"];
@@ -384,7 +384,6 @@ module.exports.changeStatus = async (req, res) => {
           },
         };
       } else {
-        // DROP
         message = {
           tokens,
           android: {
@@ -403,9 +402,21 @@ module.exports.changeStatus = async (req, res) => {
         };
       }
 
-      // 5️⃣ Single-send block
+      // 5️⃣ Send message and handle token errors
+      const failedTokens = [];
+
       if (typeof admin.messaging().sendMulticast === "function") {
-        await admin.messaging().sendMulticast(message);
+        const response = await admin.messaging().sendMulticast(message);
+        response.responses.forEach((resp, idx) => {
+          if (!resp.success) {
+            console.error(
+              "FCM error for token",
+              tokens[idx],
+              resp.error?.message
+            );
+            failedTokens.push(tokens[idx]);
+          }
+        });
       } else {
         await Promise.all(
           tokens.map((token) =>
@@ -416,15 +427,24 @@ module.exports.changeStatus = async (req, res) => {
                 android: message.android,
                 data: message.data,
               })
-              .catch((err) =>
-                console.error("FCM error for token", token, err.message)
-              )
+              .catch((err) => {
+                console.error("FCM error for token", token, err.message);
+                failedTokens.push(token);
+              })
           )
         );
       }
+
+      // 6️⃣ Remove failed tokens from customer's FCM tokens
+      if (failedTokens.length > 0) {
+        const filtered = tokens.filter((token) => !failedTokens.includes(token));
+        await Customer.findByIdAndUpdate(customer._id, {
+          fcmToken: filtered,
+        });
+      }
     }
 
-    // 6️⃣ Mark rider as busy
+    // 7️⃣ Mark rider as busy
     await Rider.findByIdAndUpdate(id, {
       isAvailable: false,
       servingOrder: _id,
@@ -438,6 +458,7 @@ module.exports.changeStatus = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 module.exports.getHotelData = async (req, res) => {
   try {
