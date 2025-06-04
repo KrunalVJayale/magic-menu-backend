@@ -1,11 +1,304 @@
-const Owner = require('../models/owner');
+const Owner = require("../models/owner");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { sendEmail } = require("../utils/emailSender");
+const { default: mongoose } = require("mongoose");
+const LiveOrder = require("../models/liveOrder");
 
+module.exports.getOTP = async (req, res) => {
+  const { name, email, number } = req.body;
 
-module.exports.homeRoute = async (req, res) => {
-    res.send('Welcome to magic menu')
+  const existingUser = await Owner.findOne({
+    $or: [{ email: email }, { number: number }], // Check for matching email or phone number
+  });
+
+  if (existingUser) {
+    return res.status(400).json({
+      status: "Error",
+      message: "User already registered with this email or phone number",
+    });
+  }
+
+  const otp = Math.floor(100000 + Math.random() * 900000);
+
+  const emailResponse = await sendEmail(name, email, otp);
+  if (emailResponse.status === 200) {
+    return res.status(200).json({
+      status: "Success",
+      message: "OTP created successfully and email sent",
+      otp: otp, // Include OTP in the response
+    });
+  } else {
+    return res.status(500).json({
+      status: "Error",
+      message: "OTP created, but failed to send email",
+    });
+  }
+};
+
+module.exports.registerData = async (req, res) => {
+  const { name, number, email, pass } = req.body;
+
+  // Check for missing fields
+  if (!name || !number || !email || !pass) {
+    return res
+      .status(400)
+      .json({ status: "Error", message: "Missing required fields" });
+  }
+
+  try {
+    // Check if the email or phone number is already in use
+    const existingUser = await Owner.findOne({
+      $or: [{ email: email }, { number: number }],
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        status: "Error",
+        message: "User already registered with this email or phone number",
+      });
+    }
+
+    // Hash the password before saving
+    const hashedPassword = await bcrypt.hash(pass, 10); // Hash with salt rounds = 10
+
+    // Create a new user with hashed password
+    const newUser = new Owner({
+      name: name,
+      email: email,
+      number: number,
+      password: hashedPassword, // Store hashed password
+    });
+
+    // Save the user and await the operation
+    await newUser.save();
+
+    // Send a success response
+    return res.status(201).json({
+      status: "Success",
+      message: "User registered successfully",
+    });
+  } catch (error) {
+    console.error("Error in registerData:", error);
+    return res.status(500).json({
+      status: "Error",
+      message: "Internal server error",
+    });
+  }
 };
 
 module.exports.loginRoute = async (req, res) => {
-    const data = await Owner.find();
-    res.send(data)
+  const { number, pass } = req.body;
+
+  // Check for missing fields
+  if (!number || !pass) {
+    return res.status(400).json({
+      status: "Error",
+      message: "Number and password are required",
+    });
+  }
+
+  try {
+    // Find user by number
+    const user = await Owner.findOne({ number: number });
+
+    // If user does not exist
+    if (!user) {
+      return res.status(404).json({
+        status: "Error",
+        message: "User does not exist. Please check the number and try again.",
+      });
+    }
+
+    // Compare the provided password with the hashed password
+    const isMatch = await bcrypt.compare(pass, user.password);
+    if (!isMatch) {
+      return res.status(401).json({
+        status: "Error",
+        message: "Incorrect password. Please try again.",
+      });
+    }
+
+    // Generate JWT token
+    const jwt_token = jwt.sign(
+      { id: user._id, number: user.number },
+      process.env.JWT_SECRET, // Ensure this is stored in an .env file
+      { expiresIn: "21d" } // Token valid for 21 days
+    );
+
+    // Send token in response
+    return res.status(200).json({
+      status: "Success",
+      message: "User validated successfully",
+      token: jwt_token, // Token for frontend authentication
+      user_id: user._id, // Send the user_id along with the token
+      user_email: user.email,
+      user_name: user.name,
+      user_no: user.number,
+      hotel: user.hotel || "", // Optional field with fallback
+      description: user.description || "", // Optional field with fallback
+      logo: user.logo?.url || "", // Optional nested field
+      isServing: user.isServing || false, // Boolean fallback
+      chef: user.chef || { name: "", number: "" }, // Object fallback
+    });
+  } catch (error) {
+    console.error("Error in login:", error);
+    return res.status(500).json({
+      status: "Error",
+      message: "Internal server error. Please try again later.",
+    });
+  }
+};
+
+module.exports.completeProfile = async (req, res) => {
+  try {
+    const { payload, user_id } = req.body;
+    if (!payload || !user_id) {
+      return res.status(400).json({ message: "Missing payload or user_id." });
+    }
+
+    const { hotel, description, logo, images, categories, chef } = payload;
+
+    // Build the $set object for fields that need updating
+    const updateFields = {};
+
+    if (hotel !== undefined) updateFields.hotel = hotel;
+    if (description !== undefined) updateFields.description = description;
+    if (logo && typeof logo === "object") {
+      if (logo.url !== undefined) updateFields["logo.url"] = logo.url;
+      if (logo.filename !== undefined)
+        updateFields["logo.filename"] = logo.filename;
+    }
+    if (Array.isArray(images)) updateFields.images = images;
+    if (Array.isArray(categories)) updateFields.categories = categories;
+    if (chef && typeof chef === "object") {
+      if (chef.name !== undefined) updateFields["chef.name"] = chef.name;
+      if (chef.number !== undefined)
+        updateFields["chef.number"] = Number(chef.number);
+    }
+
+    // Perform a single, atomic find-by-ID-and-update
+    const updatedOwner = await Owner.findByIdAndUpdate(
+      user_id,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedOwner) {
+      return res.status(404).json({ message: "Owner not found." });
+    }
+
+    return res
+      .status(200)
+      .json({ message: "Profile updated successfully.", owner: updatedOwner });
+  } catch (err) {
+    console.error("Error in completeProfile:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+};
+
+module.exports.authToken = async (req, res) => {
+  res.status(200).json({ message: "User is validated Successfully." });
+};
+
+module.exports.getReadyOrders = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(user_id)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const orders = await LiveOrder.find({ hotel: user_id, restaurantStatus: "READY" })
+      .populate({
+        path: "customer",
+        select: "name",
+      })
+      .populate({
+        path: "rider",
+        select: "name number",
+      })
+      .populate({
+        path: "items.item",
+        select: "name discountedPrice",   // must be space-separated
+      })
+      .select(
+        "ticketNumber items updatedAt rider remarks servedAt customer"
+      )
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const formattedOrders = orders.map((order) => ({
+      ticketNumber: order.ticketNumber,
+      customerName: order.customer?.name || "Unknown",
+      items: order.items.map((i) => ({
+        name: i.item?.name || "Deleted Item",
+        quantity: i.quantity,
+        price: i.item?.discountedPrice ?? 0, // now `price`
+      })),
+      updatedAt: order.updatedAt,
+      rider: order.rider
+        ? {
+            name: order.rider.name,
+            number: order.rider.number,
+          }
+        : {}, // empty object if none
+      remarks: order.remarks || "",
+      servedAt: order.servedAt,
+      orderReadyTime: undefined, // only if you populated a separate field
+    }));
+
+    res.status(200).json(formattedOrders);
+  } catch (error) {
+    console.error("Error in getReadyOrders:", error.message);
+    res.status(500).json({ error: "Failed to fetch ready orders" });
+  }
+};
+
+module.exports.getPickedUpOrders = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(user_id)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const orders = await LiveOrder.find({ hotel: user_id, status: "PICKEDUP" })
+      .populate({
+        path: "customer",
+        select: "name",
+      })
+      .populate({
+        path: "rider",
+        select: "name number",
+      })
+      .populate({
+        path: "items.item",
+        select: "name,discountedPrice",
+      })
+      .select("ticketNumber items updatedAt rider remarks servedAt customer")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const formattedOrders = orders.map(order => ({
+      ticketNumber: order.ticketNumber,
+      customerName: order.customer?.name || "Unknown",
+      items: order.items.map(i => ({
+        name: i.item?.name || "Deleted Item",
+        quantity: i.quantity,
+        price:i.item?.discountedPrice,
+      })),
+      updatedAt: order.updatedAt,
+      rider: {
+        name: order.rider.name,
+        number: order.rider.number
+      },
+      remarks: order.remarks || "",
+      servedAt: order.servedAt
+    }));
+
+    res.status(200).json(formattedOrders);
+  } catch (error) {
+    console.error("Error in getPickedUpOrders:", error.message);
+    res.status(500).json({ error: "Failed to fetch picked-up orders" });
+  }
 };

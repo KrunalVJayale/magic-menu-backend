@@ -5,26 +5,24 @@ const ownerSchema = new Schema(
   {
     name: { type: String, required: true },
     number: { type: String, required: true },
-    hotel: { type: String, required: true },
-    description: { type: String, required: true },
+    password: { type: String, required: true },
+    email: { type: String, required: true },
+    hotel: { type: String },
+    description: { type: String },
+    fcmToken:[String],
     location: {
-      latitude: { type: Number, required: true },
-      longitude: { type: Number, required: true },
-      address: { type: String, required: true },
+      latitude: { type: Number },
+      longitude: { type: Number },
+      address: { type: String  },
     },
     logo: {
       url: String,
       filename: String,
     },
-    images: [
-      {
-        url: { type: String },
-        filename: { type: String },
-      },
-    ],
-    isServing: { type: Boolean, required: true },
+    images: [String],
+    isServing: { type: Boolean },
     chef: {
-      name: { type: String, required: true },
+      name: { type: String, },
       number: { type: Number },
     },
     categories: [{ type: String }],

@@ -236,7 +236,9 @@ module.exports.newOrder = async (req, res) => {
   try {
     const { rider_latitude, rider_longitude } = req.body;
 
-    const liveOrders = await LiveOrder.find({ status: "PREPAIRING" })
+    const liveOrders = await LiveOrder.find({
+      restaurantStatus: { $in: ["ALMOST_READY", "READY"] },
+    })
       .select("hotel customer locationIndex ticketNumber") // ✅ added ticketNumber
       .lean();
 
@@ -409,11 +411,11 @@ module.exports.changeStatus = async (req, res) => {
         const response = await admin.messaging().sendMulticast(message);
         response.responses.forEach((resp, idx) => {
           if (!resp.success) {
-            console.error(
-              "FCM error for token",
-              tokens[idx],
-              resp.error?.message
-            );
+            // console.error(
+            //   "FCM error for token",
+            //   tokens[idx],
+            //   resp.error?.message
+            // );
             failedTokens.push(tokens[idx]);
           }
         });
@@ -437,7 +439,9 @@ module.exports.changeStatus = async (req, res) => {
 
       // 6️⃣ Remove failed tokens from customer's FCM tokens
       if (failedTokens.length > 0) {
-        const filtered = tokens.filter((token) => !failedTokens.includes(token));
+        const filtered = tokens.filter(
+          (token) => !failedTokens.includes(token)
+        );
         await Customer.findByIdAndUpdate(customer._id, {
           fcmToken: filtered,
         });
@@ -458,7 +462,6 @@ module.exports.changeStatus = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
-
 
 module.exports.getHotelData = async (req, res) => {
   try {

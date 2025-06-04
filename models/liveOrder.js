@@ -7,8 +7,22 @@ const liveOrderSchema = new Schema(
     orderOtp: { type: Number, required: true },
     status: {
       type: String,
-      enum: [ "PENDING", "PREPAIRING", "ACCEPTED","PICKEDUP", "DROP", "DELIVERED", "CANCELLED", "REJECTED"],
-      default: "PREPAIRING", // Default status set to "PENDING" for now it is "PREPAIRING"
+      enum: [
+        "PENDING",
+        "PREPARING",
+        "ACCEPTED",
+        "PICKEDUP",
+        "DROP",
+        "DELIVERED",
+        "CANCELLED",
+        "REJECTED",
+      ],
+      default: "PENDING", // Default status set to "PENDING"
+    },
+    restaurantStatus: {
+      type: String,
+      enum: ["PREPARING", "ALMOST_READY", "READY"],
+      default: "PREPARING",
     },
     customer: { type: Schema.Types.ObjectId, ref: "Customer", required: true },
     hotel: { type: Schema.Types.ObjectId, ref: "Owner", required: true },
@@ -25,7 +39,7 @@ const liveOrderSchema = new Schema(
     servedAt: { type: Date },
     arrivedAt: { type: Date },
     deliveredAt: { type: Date },
-    totalPrice:{type:Number,required:true}
+    totalPrice: { type: Number, required: true },
   },
   { timestamps: true }
 );
@@ -35,13 +49,6 @@ liveOrderSchema.index({ customer: 1, hotel: 1, ticketNumber: 1 });
 
 const LiveOrder = mongoose.model("LiveOrder", liveOrderSchema);
 module.exports = LiveOrder;
-
-
-
-
-
-
-
 
 // const mongoose = require("mongoose");
 // const Schema = mongoose.Schema;
