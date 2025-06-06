@@ -4,6 +4,8 @@ const jwt = require("jsonwebtoken");
 const { sendEmail } = require("../utils/emailSender");
 const { default: mongoose } = require("mongoose");
 const LiveOrder = require("../models/liveOrder");
+const Rider = require("../models/rider");
+const admin = require("../config/firebaseAdmin");
 
 module.exports.getOTP = async (req, res) => {
   const { name, email, number } = req.body;
@@ -201,33 +203,59 @@ module.exports.authToken = async (req, res) => {
   res.status(200).json({ message: "User is validated Successfully." });
 };
 
-module.exports.getReadyOrders = async (req, res) => {
+module.exports.newOrder = async (req, res) => {
+  const { hotel_id } = req.body;
+
+  if (!hotel_id) {
+    return res.status(400).json({ error: "hotel_id is required" });
+  }
+
+  try {
+    const orderExists = await LiveOrder.exists({
+      hotel: hotel_id,
+      status: "PENDING",
+    });
+
+    if (orderExists) {
+      return res.status(200).json({ newOrder: true });
+    } else {
+      return res.status(200).json({ newOrder: false });
+    }
+  } catch (error) {
+    console.error("Error checking new orders:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getNewOrders = async (req, res) => {
   try {
     const { user_id } = req.params;
     if (!mongoose.Types.ObjectId.isValid(user_id)) {
       return res.status(400).json({ error: "Invalid user ID" });
     }
 
-    const orders = await LiveOrder.find({ hotel: user_id, restaurantStatus: "READY" })
+    const orders = await LiveOrder.find({
+      hotel: user_id,
+      status: "PENDING",
+    })
       .populate({
         path: "customer",
         select: "name",
       })
       .populate({
         path: "rider",
-        select: "name number",
+        select: "name number legal",
       })
       .populate({
         path: "items.item",
-        select: "name discountedPrice",   // must be space-separated
+        select: "name discountedPrice", // must be space-separated
       })
-      .select(
-        "ticketNumber items updatedAt rider remarks servedAt customer"
-      )
-      .sort({ createdAt: -1 })
+      .select("ticketNumber items createdAt rider remarks servedAt customer")
+      // .sort({ updatedAt: -1 })
       .lean();
 
     const formattedOrders = orders.map((order) => ({
+      _id: order._id,
       ticketNumber: order.ticketNumber,
       customerName: order.customer?.name || "Unknown",
       items: order.items.map((i) => ({
@@ -235,16 +263,73 @@ module.exports.getReadyOrders = async (req, res) => {
         quantity: i.quantity,
         price: i.item?.discountedPrice ?? 0, // now `price`
       })),
-      updatedAt: order.updatedAt,
+      createdAt: order.createdAt,
       rider: order.rider
         ? {
             name: order.rider.name,
             number: order.rider.number,
+            image: order.rider.legal.passportPhoto.url,
           }
         : {}, // empty object if none
       remarks: order.remarks || "",
       servedAt: order.servedAt,
-      orderReadyTime: undefined, // only if you populated a separate field
+    }));
+
+    res.status(200).json(formattedOrders);
+  } catch (error) {
+    console.error("Error in getReadyOrders:", error.message);
+    res.status(500).json({ error: "Failed to fetch ready orders" });
+  }
+};
+
+//For now there is a fixed id given to the user_id
+module.exports.getReadyOrders = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(user_id)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const orders = await LiveOrder.find({
+      hotel: user_id,
+      restaurantStatus: "READY",
+      status: { $in: ["PREPARING", "ACCEPTED"] },
+    })
+      .populate({
+        path: "customer",
+        select: "name",
+      })
+      .populate({
+        path: "rider",
+        select: "name number legal",
+      })
+      .populate({
+        path: "items.item",
+        select: "name discountedPrice", // must be space-separated
+      })
+      .select("ticketNumber items createdAt rider remarks servedAt customer")
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const formattedOrders = orders.map((order) => ({
+      _id: order._id,
+      ticketNumber: order.ticketNumber,
+      customerName: order.customer?.name || "Unknown",
+      items: order.items.map((i) => ({
+        name: i.item?.name || "Deleted Item",
+        quantity: i.quantity,
+        price: i.item?.discountedPrice ?? 0, // now `price`
+      })),
+      updatedAt: order.createdAt,
+      rider: order.rider
+        ? {
+            name: order.rider.name,
+            number: order.rider.number,
+            image: order.rider.legal.passportPhoto.url,
+          }
+        : {}, // empty object if none
+      remarks: order.remarks || "",
+      servedAt: order.servedAt,
     }));
 
     res.status(200).json(formattedOrders);
@@ -262,43 +347,307 @@ module.exports.getPickedUpOrders = async (req, res) => {
       return res.status(400).json({ error: "Invalid user ID" });
     }
 
-    const orders = await LiveOrder.find({ hotel: user_id, status: "PICKEDUP" })
+    const orders = await LiveOrder.find({
+      hotel: user_id,
+      status: "PICKEDUP",
+    })
       .populate({
         path: "customer",
         select: "name",
       })
       .populate({
         path: "rider",
-        select: "name number",
+        select: "name number legal",
       })
       .populate({
         path: "items.item",
-        select: "name,discountedPrice",
+        select: "name discountedPrice", // must be space-separated
       })
-      .select("ticketNumber items updatedAt rider remarks servedAt customer")
-      .sort({ createdAt: -1 })
+      .select("ticketNumber items createdAt rider remarks servedAt customer")
+      .sort({ updatedAt: -1 })
       .lean();
 
-    const formattedOrders = orders.map(order => ({
+    const formattedOrders = orders.map((order) => ({
+      _id: order._id,
       ticketNumber: order.ticketNumber,
       customerName: order.customer?.name || "Unknown",
-      items: order.items.map(i => ({
+      items: order.items.map((i) => ({
         name: i.item?.name || "Deleted Item",
         quantity: i.quantity,
-        price:i.item?.discountedPrice,
+        price: i.item?.discountedPrice ?? 0, // now `price`
       })),
       updatedAt: order.updatedAt,
       rider: {
         name: order.rider.name,
-        number: order.rider.number
+        number: order.rider.number,
+        image: order.rider.legal.passportPhoto.url,
       },
       remarks: order.remarks || "",
-      servedAt: order.servedAt
+      servedAt: order.servedAt,
     }));
 
     res.status(200).json(formattedOrders);
   } catch (error) {
     console.error("Error in getPickedUpOrders:", error.message);
     res.status(500).json({ error: "Failed to fetch picked-up orders" });
+  }
+};
+
+module.exports.acceptOrder = async (req, res) => {
+  try {
+    const { order_id, preparationTime } = req.body;
+
+    if (!order_id || !preparationTime) {
+      return res
+        .status(400)
+        .json({ message: "Missing order_id or preparationTime" });
+    }
+
+    const order = await LiveOrder.findByIdAndUpdate(
+      order_id,
+      { preparationTime, status: "PREPARING" },
+      { new: true }
+    )
+      .populate({
+        path: "customer",
+        select: "name number",
+      })
+      .populate({
+        path: "rider",
+        select: "name number legal",
+      })
+      .populate({
+        path: "items.item",
+        select: "name discountedPrice",
+      })
+      .select(
+        "ticketNumber items createdAt rider remarks servedAt customer preparationTime"
+      )
+      .lean();
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const formattedOrder = {
+      _id: order._id,
+      ticketNumber: order.ticketNumber,
+      customerName: order.customer?.name || "Unknown",
+      items: order.items.map((i) => ({
+        name: i.item?.name || "Deleted Item",
+        quantity: i.quantity,
+        price: i.item?.discountedPrice ?? 0,
+      })),
+      createdAt: order.createdAt,
+      rider: order.rider
+        ? {
+            name: order.rider.name,
+            number: order.rider.number,
+            image: order.rider.legal?.passportPhoto?.url || "",
+          }
+        : undefined,
+      remarks: order.remarks || "",
+      servedAt: order.servedAt,
+      preparationTime: order.preparationTime,
+    };
+
+    res.status(200).json(formattedOrder);
+  } catch (error) {
+    console.error("Accept Order Error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+module.exports.readyOrder = async (req, res) => {
+  const { order_id } = req.body;
+
+  if (!order_id) {
+    return res.status(400).json({ error: "order_id is required" });
+  }
+
+  try {
+    const updatedOrder = await LiveOrder.findByIdAndUpdate(
+      order_id,
+      { restaurantStatus: "READY" },
+      { new: true }
+    ).populate("hotel", "hotel");
+
+    const restaurantName = updatedOrder?.hotel?.hotel || "A restaurant";
+
+    if (!updatedOrder) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Get all available riders with valid FCM tokens
+    const riders = await Rider.find({ onDuty: true, isAvailable: true });
+    const tokenEntries = [];
+    riders.forEach((r) => {
+      (r.fcmToken || []).forEach((t) => {
+        tokenEntries.push({ riderId: r._id, token: t });
+      });
+    });
+    const allTokens = tokenEntries.map((e) => e.token);
+
+    let sendRes = { successCount: 0, failureCount: 0, responses: [] };
+    if (allTokens.length) {
+      const payload = {
+        android: {
+          notification: {
+            sound: "magicmenu_zing_enhanced",
+            channelId: "custom-sound-channel",
+            title: `✅ ${restaurantName} - Order Ready`,
+            body: "Order is prepared and ready for pickup. Head to the restaurant now! 🚗",
+          },
+        },
+      };
+
+      if (typeof admin.messaging().sendMulticast === "function") {
+        sendRes = await admin
+          .messaging()
+          .sendMulticast({ ...payload, tokens: allTokens });
+      } else {
+        // Fallback one-by-one
+        const results = await Promise.all(
+          allTokens.map(async (token) => {
+            try {
+              await admin.messaging().send({ ...payload, token });
+              return { success: true };
+            } catch (error) {
+              return { success: false, error };
+            }
+          })
+        );
+        sendRes = {
+          successCount: results.filter((r) => r.success).length,
+          failureCount: results.filter((r) => !r.success).length,
+          responses: results,
+        };
+      }
+
+      // Remove invalid tokens
+      const invalidMap = {};
+      sendRes.responses.forEach((resp, idx) => {
+        if (
+          !resp.success &&
+          resp.error?.code &&
+          [
+            "messaging/invalid-registration-token",
+            "messaging/registration-token-not-registered",
+          ].includes(resp.error.code)
+        ) {
+          const { riderId, token } = tokenEntries[idx];
+          invalidMap[riderId] = invalidMap[riderId] || [];
+          invalidMap[riderId].push(token);
+        }
+      });
+
+      await Promise.all(
+        Object.entries(invalidMap).map(([rId, tokens]) =>
+          Rider.findByIdAndUpdate(rId, { $pull: { fcmToken: { $in: tokens } } })
+        )
+      );
+    }
+
+    return res.status(200).json({ status: "READY" });
+  } catch (error) {
+    console.error("Error updating order status:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.almostReadyOrder = async (req, res) => {
+  const { order_id } = req.body;
+
+  if (!order_id) {
+    return res.status(400).json({ error: "order_id is required" });
+  }
+
+  try {
+    const updatedOrder = await LiveOrder.findByIdAndUpdate(
+      order_id,
+      { restaurantStatus: "ALMOST_READY" },
+      { new: true }
+    ).populate("hotel", "hotel");
+
+    const restaurantName = updatedOrder?.hotel?.hotel || "A restaurant";
+
+    if (!updatedOrder) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Get all available riders with valid FCM tokens
+    const riders = await Rider.find({ onDuty: true, isAvailable: true });
+    const tokenEntries = [];
+    riders.forEach((r) => {
+      (r.fcmToken || []).forEach((t) => {
+        tokenEntries.push({ riderId: r._id, token: t });
+      });
+    });
+    const allTokens = tokenEntries.map((e) => e.token);
+
+    let sendRes = { successCount: 0, failureCount: 0, responses: [] };
+    if (allTokens.length) {
+      const payload = {
+        android: {
+          notification: {
+            sound: "magicmenu_zing_enhanced",
+            channelId: "custom-sound-channel",
+            title: `⏳ ${restaurantName} - Order Almost Ready`,
+            body: "The order will be ready in 5 minutes. Get prepared to pick it up! 🚀",
+          },
+        },
+      };
+
+      if (typeof admin.messaging().sendMulticast === "function") {
+        sendRes = await admin
+          .messaging()
+          .sendMulticast({ ...payload, tokens: allTokens });
+      } else {
+        // Fallback one-by-one
+        const results = await Promise.all(
+          allTokens.map(async (token) => {
+            try {
+              await admin.messaging().send({ ...payload, token });
+              return { success: true };
+            } catch (error) {
+              return { success: false, error };
+            }
+          })
+        );
+        sendRes = {
+          successCount: results.filter((r) => r.success).length,
+          failureCount: results.filter((r) => !r.success).length,
+          responses: results,
+        };
+      }
+
+      // Remove invalid tokens
+      const invalidMap = {};
+      sendRes.responses.forEach((resp, idx) => {
+        if (
+          !resp.success &&
+          resp.error?.code &&
+          [
+            "messaging/invalid-registration-token",
+            "messaging/registration-token-not-registered",
+          ].includes(resp.error.code)
+        ) {
+          const { riderId, token } = tokenEntries[idx];
+          invalidMap[riderId] = invalidMap[riderId] || [];
+          invalidMap[riderId].push(token);
+        }
+      });
+
+      await Promise.all(
+        Object.entries(invalidMap).map(([rId, tokens]) =>
+          Rider.findByIdAndUpdate(rId, { $pull: { fcmToken: { $in: tokens } } })
+        )
+      );
+    }
+
+    return res.status(200).json({ status: "ALMOST_READY" });
+  } catch (error) {
+    console.error("Error updating order status:", error);
+    return res.status(500).json({ error: "Internal server error" });
   }
 };

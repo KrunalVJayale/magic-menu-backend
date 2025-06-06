@@ -36,6 +36,7 @@ const liveOrderSchema = new Schema(
     ],
     remarks: { type: String },
     orderedAt: { type: Date, default: Date.now },
+    preparationTime:{type:Number,default:0},
     servedAt: { type: Date },
     arrivedAt: { type: Date },
     deliveredAt: { type: Date },

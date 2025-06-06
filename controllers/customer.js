@@ -551,8 +551,7 @@ module.exports.liveOrder = async (req, res) => {
       order.customer.location[order.locationIndex];
 
     const distance = calculateDistance(lat1, lon1, lat2, lon2).toFixed(2);
-    const averageSpeed = 25; // km/h
-    const estimatedDeliveryTime = ((distance / averageSpeed) * 60 + 10).toFixed(
+    const estimatedDeliveryTime = ((distance / 25) * 60 + order.preparationTime).toFixed(
       2
     ); // in minutes
 

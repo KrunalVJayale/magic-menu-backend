@@ -238,6 +238,7 @@ module.exports.newOrder = async (req, res) => {
 
     const liveOrders = await LiveOrder.find({
       restaurantStatus: { $in: ["ALMOST_READY", "READY"] },
+      status:"PREPARING",
     })
       .select("hotel customer locationIndex ticketNumber") // ✅ added ticketNumber
       .lean();
