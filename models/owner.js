@@ -25,6 +25,7 @@ const ownerSchema = new Schema(
       name: { type: String, },
       number: { type: Number },
     },
+    isVeg:{type:Boolean,default:false},
     categories: [{ type: String }],
     isBrand: { type: Boolean, default: false },
   },

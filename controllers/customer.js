@@ -115,7 +115,7 @@ module.exports.hotelData = async (req, res) => {
 
 module.exports.listingData = async (req, res) => {
   let { id, category } = req.params;
-  let data = await Listing.find({ owner: id, category: category });
+  let data = await Listing.find({ owner: id, category: category, inStock:true });
   return res.send(data);
 };
 
@@ -804,7 +804,7 @@ module.exports.paymentConfirm = async (req, res) => {
         android: {
           notification: {
             sound: "magicmenu_zing_enhanced",
-            channelId: "custom-sound-channel", // ✅ Correct way
+            channelId: "custom-sound-channel", 
             title: "🚨 Incoming Order Request!",
             body: "Someone’s hungry and counting on you. Tap to accept.⚡️",
           },

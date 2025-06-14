@@ -6,6 +6,7 @@ const { default: mongoose } = require("mongoose");
 const LiveOrder = require("../models/liveOrder");
 const Rider = require("../models/rider");
 const admin = require("../config/firebaseAdmin");
+const Listing = require("../models/itemListing");
 
 module.exports.getOTP = async (req, res) => {
   const { name, email, number } = req.body;
@@ -201,6 +202,37 @@ module.exports.completeProfile = async (req, res) => {
 
 module.exports.authToken = async (req, res) => {
   res.status(200).json({ message: "User is validated Successfully." });
+};
+
+module.exports.toggleDuty = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Validate ID
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid or Missing ID" });
+    }
+
+    // Toggle onDuty status directly using $bit for efficiency
+    const result = await Owner.updateOne({ _id: id }, [
+      { $set: { isServing: { $not: "$isServing" } } },
+    ]);
+
+    // Check if any document was modified
+    if (result.modifiedCount === 0) {
+      return res
+        .status(404)
+        .json({ message: "User not found or status unchanged" });
+    }
+
+    // Success response
+    return res
+      .status(200)
+      .json({ message: "Serving status updated successfully" });
+  } catch (e) {
+    console.error("Error at toggleDuty API:", e);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 module.exports.newOrder = async (req, res) => {
@@ -651,3 +683,186 @@ module.exports.almostReadyOrder = async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 };
+
+// Menu routes controllers
+module.exports.getRestaurantData = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+
+    const restaurant = await Owner.findById(user_id).select(
+      "hotel description isVeg logo"
+    );
+
+    if (!restaurant) {
+      return res.status(404).json({ message: "Restaurant not found" });
+    }
+
+    res.status(200).json(restaurant);
+  } catch (error) {
+    console.error(
+      "Error fetching restaurant data from getRestaurantData: ",
+      error
+    );
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+module.exports.getRestaurantCategories = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+
+    if (!user_id) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    const owner = await Owner.findById(user_id).select("categories");
+
+    if (!owner) {
+      return res.status(404).json({ error: "Owner not found" });
+    }
+
+    res.status(200).json({ categories: owner.categories });
+  } catch (error) {
+    console.error("Error fetching categories:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+module.exports.getCategoriesItems = async (req, res) => {
+  try {
+    const { user_id, category } = req.params;
+
+    if (!user_id || !category) {
+      return res
+        .status(400)
+        .json({ message: "User ID and category are required." });
+    }
+
+    const items = await Listing.find({ owner: user_id, category });
+
+    res.status(200).json(items);
+  } catch (error) {
+    console.error("Error fetching category items:", error);
+    res
+      .status(500)
+      .json({ message: "Failed to fetch items. Try again later." });
+  }
+};
+
+module.exports.changeListingStockStatus = async (req, res) => {
+  try {
+    const { item_id } = req.params;
+    const item = await Listing.findById(item_id);
+
+    if (!item) {
+      return res.status(404).json({ message: "Item not found" });
+    }
+
+    item.inStock = !item.inStock;
+    await item.save();
+
+    res
+      .status(200)
+      .json({ message: "Stock status updated", inStock: item.inStock });
+  } catch (err) {
+    console.error("Error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+module.exports.changeListingRecommendStatus = async (req, res) => {
+  try {
+    const { item_id } = req.params;
+    const item = await Listing.findById(item_id);
+
+    if (!item) {
+      return res.status(404).json({ message: "Item not found" });
+    }
+
+    item.isRecommended = !item.isRecommended;
+    await item.save();
+
+    res
+      .status(200)
+      .json({
+        message: "Stock status updated",
+        isRecommended: item.isRecommended,
+      });
+  } catch (err) {
+    console.error("Error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+module.exports.addListing = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    const payload = req.body;
+
+    // Validate user_id
+    if (!mongoose.Types.ObjectId.isValid(user_id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+    // Validate required payload fields
+    const requiredFields = ["name", "description", "originalPrice", "discountedPrice", "category", "isVeg", "imageUrl"];
+    for (let field of requiredFields) {
+      if (!payload[field]) {
+        return res.status(400).json({ message: `Missing required field: ${field}` });
+      }
+    }
+
+    // Construct new listing
+    const newListing = new Listing({
+      name: payload.name,
+      originalPrice: payload.originalPrice,
+      discountedPrice: payload.discountedPrice,
+      description: payload.description,
+      images: [
+        {
+          url: payload.imageUrl,
+          filename: payload.imageUrl.split("/").pop(),
+        },
+      ],
+      isVeg: payload.isVeg,
+      inStock: false,
+      isRecommended: false,
+      category: payload.category,
+      owner: user_id,
+    });
+
+    // Save to database
+    await newListing.save();
+
+    return res.status(201).json({
+      message: "Listing created successfully",
+    });
+
+  } catch (error) {
+    console.error("Add Listing Error:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+module.exports.addCategory = async (req, res) => {
+  const { user_id } = req.params;
+  const category = req.body;
+
+  try {
+    const hotel = await Owner.findById(user_id);
+    if (!hotel) return res.status(404).json({ message: "Hotel not found" });
+
+    if (!Array.isArray(hotel.categories)) {
+      hotel.categories = [];
+    }
+
+    hotel.categories.push(category.name); // ✅ Fix is here
+
+    await hotel.save();
+    res.status(200).json({ message: "Category added successfully" });
+  } catch (error) {
+    console.error("Add Category Error:", error);
+    res.status(500).json({ message: "Something went wrong", error: error.message });
+  }
+};
+
+

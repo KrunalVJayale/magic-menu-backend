@@ -14,6 +14,8 @@ const listingSchema = new Schema(
       },
     ],
     isVeg: { type: Boolean, required: true },
+    inStock:{type:Boolean ,require:true,default:false},
+    isRecommended:{type:Boolean ,default:false},
     category: { type: String, required: true },
     owner: {
       type: Schema.Types.ObjectId,
