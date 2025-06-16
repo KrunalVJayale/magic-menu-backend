@@ -7,25 +7,36 @@ const listingSchema = new Schema(
     originalPrice: Number, // Original price before discount
     discountedPrice: { type: Number, required: true },
     description: { type: String, required: true },
-    images: [
-      {
-        url: { type: String, required: true },
-        filename: { type: String, required: true },
-      },
-    ],
+    images: {
+      type: [
+        {
+          url: {
+            type: String,
+            default: "https://dummyimage.com/200x200/ccc/fff&text=No+Image",
+          },
+          filename: { type: String, default: "no-image" },
+        },
+      ],
+      default: [
+        {
+          url: "https://dummyimage.com/200x200/ccc/fff&text=No+Image",
+          filename: "no-image",
+        },
+      ],
+    },
     isVeg: { type: Boolean, required: true },
-    inStock:{type:Boolean ,require:true,default:false},
-    isRecommended:{type:Boolean ,default:false},
+    inStock: { type: Boolean, required: true, default: false },
+    isRecommended: { type: Boolean, default: false },
     category: { type: String, required: true },
     owner: {
       type: Schema.Types.ObjectId,
       ref: "Owner",
       required: true,
     },
-    rating: { type: Number, default: 0 }, // This will store the average rating
-    ratingsCount: { type: Number, default: 0 }, // This will store the number of ratings received
+    rating: { type: Number, default: 0 },
+    ratingsCount: { type: Number, default: 0 },
   },
-  { timestamps: true } // This will automatically add createdAt and updatedAt fields
+  { timestamps: true }
 );
 
 const Listing = mongoose.model("Listing", listingSchema);

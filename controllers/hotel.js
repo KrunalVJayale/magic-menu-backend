@@ -803,13 +803,32 @@ module.exports.addListing = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(user_id)) {
       return res.status(400).json({ message: "Invalid user ID" });
     }
-    // Validate required payload fields
-    const requiredFields = ["name", "description", "originalPrice", "discountedPrice", "category", "isVeg", "imageUrl"];
+
+    // Validate required payload fields (excluding imageUrl to allow dummy)
+    const requiredFields = [
+      "name",
+      "description",
+      "originalPrice",
+      "discountedPrice",
+      "category",
+      "isVeg",
+    ];
+
     for (let field of requiredFields) {
       if (!payload[field]) {
         return res.status(400).json({ message: `Missing required field: ${field}` });
       }
     }
+
+    // Prepare images array
+    const images = payload.imageUrl
+      ? [
+          {
+            url: payload.imageUrl,
+            filename: payload.imageUrl.split("/").pop(),
+          },
+        ]
+      : undefined; // Let schema use the default dummy image
 
     // Construct new listing
     const newListing = new Listing({
@@ -817,12 +836,7 @@ module.exports.addListing = async (req, res) => {
       originalPrice: payload.originalPrice,
       discountedPrice: payload.discountedPrice,
       description: payload.description,
-      images: [
-        {
-          url: payload.imageUrl,
-          filename: payload.imageUrl.split("/").pop(),
-        },
-      ],
+      images, // use undefined if not provided
       isVeg: payload.isVeg,
       inStock: false,
       isRecommended: false,
@@ -830,13 +844,11 @@ module.exports.addListing = async (req, res) => {
       owner: user_id,
     });
 
-    // Save to database
     await newListing.save();
 
     return res.status(201).json({
       message: "Listing created successfully",
     });
-
   } catch (error) {
     console.error("Add Listing Error:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
@@ -865,4 +877,156 @@ module.exports.addCategory = async (req, res) => {
   }
 };
 
+module.exports.updateCategory = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    const { oldCategory, newCategory } = req.body;
 
+    if (!oldCategory || !newCategory) {
+      return res.status(400).json({ message: "Both old and new category names are required." });
+    }
+
+    const owner = await Owner.findById(user_id);
+    if (!owner) {
+      return res.status(404).json({ message: "Owner not found." });
+    }
+
+    // Find old category index (trimmed for safety, but store exactly as typed)
+    const categoryIndex = owner.categories.findIndex(
+      (cat) => cat.trim() === oldCategory.trim()
+    );
+
+    if (categoryIndex === -1) {
+      return res.status(404).json({ message: "Old category not found." });
+    }
+
+    // Check for duplicates (also trimmed)
+    const isDuplicate = owner.categories.some(
+      (cat) => cat.trim() === newCategory.trim()
+    );
+
+    if (isDuplicate) {
+      return res.status(400).json({ message: "New category already exists." });
+    }
+
+    // Update owner's category
+    owner.categories[categoryIndex] = newCategory;
+    await owner.save();
+
+    // ✅ Update all listings with the old category
+    const updateResult = await Listing.updateMany(
+      { owner: user_id, category: oldCategory },
+      { $set: { category: newCategory } }
+    );
+
+    return res.status(200).json({
+      message: "Category updated successfully.",
+      listingsUpdated: updateResult.modifiedCount,
+    });
+  } catch (error) {
+    console.error("Update Category Error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+};
+
+module.exports.deleteCategory = async (req, res) => {
+  const { user_id } = req.params;
+  const { category } = req.body;
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Step 1: Remove category from Owner's list
+    const owner = await Owner.findByIdAndUpdate(
+      user_id,
+      { $pull: { categories: category } },
+      { new: true, session }
+    );
+    if (!owner) {
+      throw new Error("Owner not found");
+    }
+
+    // Step 2: Delete listings under this category
+    await Listing.deleteMany({ owner: user_id, category }, { session });
+
+    // Commit transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.status(200).json({ message: "Category and listings deleted successfully" });
+  } catch (error) {
+    // Abort transaction on any error
+    await session.abortTransaction();
+    session.endSession();
+    console.error("Delete Category Transaction Failed:", error);
+    return res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+
+module.exports.updateListing = async (req, res) => {
+  try {
+    const { user_id, item_id } = req.params;
+    const payload = req.body;
+
+    // Validate MongoDB ObjectIDs
+    if (!mongoose.Types.ObjectId.isValid(user_id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(item_id)) {
+      return res.status(400).json({ message: "Invalid item ID" });
+    }
+
+    // Validate required fields
+    const requiredFields = [
+      "name",
+      "description",
+      "originalPrice",
+      "discountedPrice",
+      "isVeg",
+    ];
+
+    for (let field of requiredFields) {
+      if (payload[field] === undefined || payload[field] === null) {
+        return res.status(400).json({ message: `Missing required field: ${field}` });
+      }
+    }
+
+    // Prepare update object
+    const updateData = {
+      name: payload.name,
+      description: payload.description,
+      originalPrice: payload.originalPrice,
+      discountedPrice: payload.discountedPrice,
+      isVeg: payload.isVeg,
+    };
+
+    // Only include images if imageUrl is passed
+    if (payload.imageUrl) {
+      updateData.images = [
+        {
+          url: payload.imageUrl,
+          filename: payload.imageUrl.split("/").pop(),
+        },
+      ];
+    }
+
+    const updatedListing = await Listing.findOneAndUpdate(
+      { _id: item_id, owner: user_id },
+      { $set: updateData },
+      { new: true }
+    );
+
+    if (!updatedListing) {
+      return res.status(404).json({ message: "Listing not found or not owned by user" });
+    }
+
+    return res.status(200).json({
+      message: "Listing updated successfully",
+    });
+  } catch (error) {
+    console.error("Update Listing Error:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
