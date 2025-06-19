@@ -7,6 +7,8 @@ const LiveOrder = require("../models/liveOrder");
 const Rider = require("../models/rider");
 const admin = require("../config/firebaseAdmin");
 const Listing = require("../models/itemListing");
+const PastOrder = require("../models/pastOrder");
+const moment = require("moment");
 
 module.exports.getOTP = async (req, res) => {
   const { name, email, number } = req.body;
@@ -160,7 +162,7 @@ module.exports.completeProfile = async (req, res) => {
       return res.status(400).json({ message: "Missing payload or user_id." });
     }
 
-    const { hotel, description, logo, images, categories, chef } = payload;
+    const { hotel, description, logo, images, chef, location } = payload;
 
     // Build the $set object for fields that need updating
     const updateFields = {};
@@ -173,14 +175,20 @@ module.exports.completeProfile = async (req, res) => {
         updateFields["logo.filename"] = logo.filename;
     }
     if (Array.isArray(images)) updateFields.images = images;
-    if (Array.isArray(categories)) updateFields.categories = categories;
     if (chef && typeof chef === "object") {
       if (chef.name !== undefined) updateFields["chef.name"] = chef.name;
       if (chef.number !== undefined)
         updateFields["chef.number"] = Number(chef.number);
     }
+    if (location && typeof location === "object") {
+      if (location.latitude !== undefined)
+        updateFields["location.latitude"] = location.latitude;
+      if (location.longitude !== undefined)
+        updateFields["location.longitude"] = location.longitude;
+      if (location.address !== undefined)
+        updateFields["location.address"] = location.address;
+    }
 
-    // Perform a single, atomic find-by-ID-and-update
     const updatedOwner = await Owner.findByIdAndUpdate(
       user_id,
       { $set: updateFields },
@@ -191,9 +199,10 @@ module.exports.completeProfile = async (req, res) => {
       return res.status(404).json({ message: "Owner not found." });
     }
 
-    return res
-      .status(200)
-      .json({ message: "Profile updated successfully.", owner: updatedOwner });
+    return res.status(200).json({
+      message: "Profile updated successfully.",
+      owner: updatedOwner,
+    });
   } catch (err) {
     console.error("Error in completeProfile:", err);
     return res.status(500).json({ message: "Server error." });
@@ -782,12 +791,10 @@ module.exports.changeListingRecommendStatus = async (req, res) => {
     item.isRecommended = !item.isRecommended;
     await item.save();
 
-    res
-      .status(200)
-      .json({
-        message: "Stock status updated",
-        isRecommended: item.isRecommended,
-      });
+    res.status(200).json({
+      message: "Stock status updated",
+      isRecommended: item.isRecommended,
+    });
   } catch (err) {
     console.error("Error:", err);
     res.status(500).json({ message: "Server error" });
@@ -816,7 +823,9 @@ module.exports.addListing = async (req, res) => {
 
     for (let field of requiredFields) {
       if (!payload[field]) {
-        return res.status(400).json({ message: `Missing required field: ${field}` });
+        return res
+          .status(400)
+          .json({ message: `Missing required field: ${field}` });
       }
     }
 
@@ -851,7 +860,94 @@ module.exports.addListing = async (req, res) => {
     });
   } catch (error) {
     console.error("Add Listing Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
+  }
+};
+
+module.exports.updateListing = async (req, res) => {
+  try {
+    const { user_id, item_id } = req.params;
+    const payload = req.body;
+
+    // 🔒 Validate MongoDB ObjectIDs
+    if (!mongoose.Types.ObjectId.isValid(user_id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(item_id)) {
+      return res.status(400).json({ message: "Invalid item ID" });
+    }
+
+    // 🧾 Validate required fields
+    const requiredFields = [
+      "name",
+      "description",
+      "originalPrice",
+      "discountedPrice",
+      "isVeg",
+    ];
+    for (let field of requiredFields) {
+      if (payload[field] === undefined || payload[field] === null) {
+        return res
+          .status(400)
+          .json({ message: `Missing required field: ${field}` });
+      }
+    }
+
+    // 🛠️ Prepare update object
+    const updateData = {
+      name: payload.name.trim(),
+      description: payload.description?.trim() || "",
+      originalPrice: Number(payload.originalPrice),
+      discountedPrice: Number(payload.discountedPrice),
+      isVeg: Boolean(payload.isVeg),
+    };
+
+    // 🖼️ Handle image update
+    if (payload.imageUrl) {
+      updateData.images = [
+        {
+          url: payload.imageUrl,
+          filename: payload.imageUrl.split("/").pop(),
+        },
+      ];
+    }
+
+    // 🧩 Handle optional addOns
+    if (Array.isArray(payload.addOns)) {
+      const validAddOns = payload.addOns.filter(
+        (a) =>
+          a &&
+          mongoose.Types.ObjectId.isValid(a._id) &&
+          typeof a.name === "string" &&
+          a.name.trim() !== ""
+      );
+      updateData.addOns = validAddOns;
+    }
+
+    // 🧾 Update the listing
+    const updatedListing = await Listing.findOneAndUpdate(
+      { _id: item_id, owner: user_id },
+      { $set: updateData },
+      { new: true }
+    );
+
+    if (!updatedListing) {
+      return res
+        .status(404)
+        .json({ message: "Listing not found or not owned by user" });
+    }
+
+    return res.status(200).json({
+      message: "Listing updated successfully",
+      listing: updatedListing, // helpful for frontend
+    });
+  } catch (error) {
+    console.error("Update Listing Error:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -873,7 +969,9 @@ module.exports.addCategory = async (req, res) => {
     res.status(200).json({ message: "Category added successfully" });
   } catch (error) {
     console.error("Add Category Error:", error);
-    res.status(500).json({ message: "Something went wrong", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Something went wrong", error: error.message });
   }
 };
 
@@ -883,7 +981,9 @@ module.exports.updateCategory = async (req, res) => {
     const { oldCategory, newCategory } = req.body;
 
     if (!oldCategory || !newCategory) {
-      return res.status(400).json({ message: "Both old and new category names are required." });
+      return res
+        .status(400)
+        .json({ message: "Both old and new category names are required." });
     }
 
     const owner = await Owner.findById(user_id);
@@ -954,7 +1054,9 @@ module.exports.deleteCategory = async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
-    return res.status(200).json({ message: "Category and listings deleted successfully" });
+    return res
+      .status(200)
+      .json({ message: "Category and listings deleted successfully" });
   } catch (error) {
     // Abort transaction on any error
     await session.abortTransaction();
@@ -964,69 +1066,275 @@ module.exports.deleteCategory = async (req, res) => {
   }
 };
 
-
-module.exports.updateListing = async (req, res) => {
+module.exports.getAddOnCategoriesItems = async (req, res) => {
   try {
-    const { user_id, item_id } = req.params;
-    const payload = req.body;
+    const { user_id, category } = req.params;
 
-    // Validate MongoDB ObjectIDs
-    if (!mongoose.Types.ObjectId.isValid(user_id)) {
-      return res.status(400).json({ message: "Invalid user ID" });
-    }
-    if (!mongoose.Types.ObjectId.isValid(item_id)) {
-      return res.status(400).json({ message: "Invalid item ID" });
+    if (!user_id || !category) {
+      return res
+        .status(400)
+        .json({ message: "User ID and category are required." });
     }
 
-    // Validate required fields
-    const requiredFields = [
-      "name",
-      "description",
-      "originalPrice",
-      "discountedPrice",
-      "isVeg",
-    ];
-
-    for (let field of requiredFields) {
-      if (payload[field] === undefined || payload[field] === null) {
-        return res.status(400).json({ message: `Missing required field: ${field}` });
-      }
-    }
-
-    // Prepare update object
-    const updateData = {
-      name: payload.name,
-      description: payload.description,
-      originalPrice: payload.originalPrice,
-      discountedPrice: payload.discountedPrice,
-      isVeg: payload.isVeg,
-    };
-
-    // Only include images if imageUrl is passed
-    if (payload.imageUrl) {
-      updateData.images = [
-        {
-          url: payload.imageUrl,
-          filename: payload.imageUrl.split("/").pop(),
-        },
-      ];
-    }
-
-    const updatedListing = await Listing.findOneAndUpdate(
-      { _id: item_id, owner: user_id },
-      { $set: updateData },
-      { new: true }
+    const items = await Listing.find({ owner: user_id, category }).select(
+      "name _id"
     );
 
-    if (!updatedListing) {
-      return res.status(404).json({ message: "Listing not found or not owned by user" });
+    res.status(200).json(items);
+  } catch (error) {
+    console.error("Error fetching category items:", error);
+    res
+      .status(500)
+      .json({ message: "Failed to fetch items. Try again later." });
+  }
+};
+
+module.exports.changeCategoryStatus = async (req, res) => {
+  const { user_id } = req.params;
+  const { category } = req.body;
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Step 1: Update listings under this category to inStock: false
+    await Listing.updateMany(
+      { owner: user_id, category },
+      { $set: { inStock: false } },
+      { session }
+    );
+
+    // Commit transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    return res
+      .status(200)
+      .json({ message: "Category and listings updated successfully" });
+  } catch (error) {
+    // Abort transaction on any error
+    await session.abortTransaction();
+    session.endSession();
+    console.error("Update Category Transaction Failed:", error);
+    return res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+module.exports.getRestaurantProfile = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+
+    const restaurant = await Owner.findById(user_id).select(
+      "name email number hotel description chef isVeg logo"
+    );
+
+    if (!restaurant) {
+      return res.status(404).json({ message: "Restaurant not found" });
     }
 
+    res.status(200).json(restaurant);
+  } catch (error) {
+    console.error(
+      "Error fetching restaurant data from getRestaurantData: ",
+      error
+    );
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+module.exports.updateRestaurantProfile = async (req, res) => {
+  try {
+    const { user_id } = req.params;
+
+    // Get the updated data from request body
+    const {
+      name,
+      email,
+      number,
+      hotel,
+      description,
+      chef,
+      isVeg,
+      logo,
+    } = req.body;
+
+    // Find the restaurant owner by ID
+    const restaurant = await Owner.findById(user_id);
+
+    if (!restaurant) {
+      return res.status(404).json({ message: "Restaurant not found" });
+    }
+
+    // Update the restaurant profile fields
+    if (name) restaurant.name = name;
+    if (email) restaurant.email = email;
+    if (number) restaurant.number = number;
+    if (hotel) restaurant.hotel = hotel;
+    if (description) restaurant.description = description;
+    if (typeof isVeg === "boolean") restaurant.isVeg = isVeg;
+    if (logo && logo.url) restaurant.logo = logo;
+    if (chef?.name || chef?.number) {
+      restaurant.chef = {
+        name: chef.name || restaurant.chef?.name || "",
+        number: chef.number || restaurant.chef?.number || null,
+      };
+    }
+
+    await restaurant.save();
+
+    res.status(200).json({ message: "Restaurant profile updated successfully" });
+  } catch (error) {
+    console.error("Error updating restaurant profile:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+module.exports.getBusinessReport = async (req, res) => {
+  const { user_id } = req.params;
+
+  try {
+    const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+
+    const todayStart = moment().startOf("day").toDate();
+    const todayEnd = moment().endOf("day").toDate();
+
+    const yesterdayStart = moment().subtract(1, "day").startOf("day").toDate();
+    const yesterdayEnd = moment().subtract(1, "day").endOf("day").toDate();
+
+    // Helper to get dynamic total from discountedPrice * quantity
+    const calculateRevenue = async (startDate, endDate) => {
+      const result = await PastOrder.aggregate([
+        {
+          $match: {
+            hotel: hotelObjectId,
+            status: "DELIVERED",
+            deliveredAt: { $gte: startDate, $lte: endDate },
+          },
+        },
+        { $unwind: "$items" },
+        {
+          $lookup: {
+            from: "listings",
+            localField: "items.item",
+            foreignField: "_id",
+            as: "itemData",
+          },
+        },
+        { $unwind: "$itemData" },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: {
+              $sum: {
+                $multiply: ["$items.quantity", "$itemData.discountedPrice"],
+              },
+            },
+          },
+        },
+      ]);
+
+      return result[0]?.totalRevenue || 0;
+    };
+
+    const todaySales = await calculateRevenue(todayStart, todayEnd);
+    const yesterdaySales = await calculateRevenue(yesterdayStart, yesterdayEnd);
+
     return res.status(200).json({
-      message: "Listing updated successfully",
+      todaySales,
+      yesterdaySales,
     });
   } catch (error) {
-    console.error("Update Listing Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Error in getBusinessReport:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getOrderSummary = async (req, res) => {
+  const { user_id } = req.params;
+
+  try {
+    const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+    const startOfToday = moment().startOf("day").toDate();
+    const endOfToday = moment().endOf("day").toDate();
+
+    // Delivered today from PastOrder (use deliveredAt)
+    const deliveredCount = await PastOrder.countDocuments({
+      hotel: hotelObjectId,
+      status: "DELIVERED",
+      deliveredAt: { $gte: startOfToday, $lte: endOfToday },
+    });
+
+    // Pending orders placed today in LiveOrder (use createdAt)
+    const pendingCount = await LiveOrder.countDocuments({
+      hotel: hotelObjectId,
+      createdAt: { $gte: startOfToday, $lte: endOfToday },
+    });
+
+    const totalOrders = deliveredCount + pendingCount;
+
+    return res.status(200).json({
+      totalOrders,
+      delivered: deliveredCount,
+      pending: pendingCount,
+    });
+  } catch (error) {
+    console.error("Error fetching order summary:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getTopSellingItems = async (req, res) => {
+  const { user_id } = req.params;
+
+  try {
+    const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+    const startOfToday = moment().startOf("day").toDate();
+    const endOfToday = moment().endOf("day").toDate();
+
+    const result = await PastOrder.aggregate([
+      {
+        $match: {
+          hotel: hotelObjectId,
+          status: "DELIVERED",
+          deliveredAt: { $gte: startOfToday, $lte: endOfToday },
+        },
+      },
+      { $unwind: "$items" },
+      {
+        $lookup: {
+          from: "listings",
+          localField: "items.item",
+          foreignField: "_id",
+          as: "itemData",
+        },
+      },
+      { $unwind: "$itemData" },
+      {
+        $group: {
+          _id: "$itemData.name",
+          quantity: { $sum: "$items.quantity" },
+          revenue: {
+            $sum: {
+              $multiply: ["$items.quantity", "$itemData.discountedPrice"],
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          name: "$_id",
+          quantity: 1,
+          revenue: 1,
+          _id: 0,
+        },
+      },
+      { $sort: { quantity: -1 } }, // Most sold first
+      { $limit: 5 }, // Optional: top 10
+    ]);
+
+    res.status(200).json(result);
+  } catch (error) {
+    console.error("Error getting top selling items:", error.message);
+    res.status(500).json({ error: "Internal server error" });
   }
 };

@@ -35,6 +35,17 @@ const listingSchema = new Schema(
     },
     rating: { type: Number, default: 0 },
     ratingsCount: { type: Number, default: 0 },
+    addOns: [
+        {
+          _id: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Listing", // Optional: if you have an AddOn collection
+          },
+          name: {
+            type: String,
+          },
+        },
+      ],
   },
   { timestamps: true }
 );
