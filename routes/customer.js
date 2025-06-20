@@ -22,7 +22,8 @@ const {
   liveOrderCancel,
   updateDefault,
   deleteAddress,
-  registerFCM
+  registerFCM,
+  getAddOns
 } = require("../controllers/customer");
 const wrapAsync = require("../utils/wrapAsync");
 const authMiddleware = require("../utils/jwtAuth");
@@ -33,6 +34,7 @@ const authMiddleware = require("../utils/jwtAuth");
 router.get("/:user_id/data",wrapAsync(data));
 router.get("/:_id/:id/hotelData", wrapAsync(hotelData));
 router.get("/:id/listingData/:category", wrapAsync(listingData));
+router.post("/get-addons", wrapAsync(getAddOns));
 router.post("/getotp", wrapAsync(getOTP));
 router.post("/register", wrapAsync(registerData));
 router.post("/login", wrapAsync(login));

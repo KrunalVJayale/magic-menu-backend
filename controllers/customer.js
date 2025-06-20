@@ -115,9 +115,39 @@ module.exports.hotelData = async (req, res) => {
 
 module.exports.listingData = async (req, res) => {
   let { id, category } = req.params;
-  let data = await Listing.find({ owner: id, category: category, inStock:true });
+  let data = await Listing.find({ owner: id, category: category });
   return res.send(data);
 };
+
+module.exports.getAddOns = async (req, res) => {
+  const { itemIds } = req.body;
+
+  if (!Array.isArray(itemIds) || itemIds.length === 0) {
+    return res.status(400).json({ message: "itemIds must be a non-empty array" });
+  }
+
+  try {
+    // Step 1: Get addOn IDs from given listings
+    const items = await Listing.find({ _id: { $in: itemIds } }, "addOns");
+
+    const allAddOnIds = items.flatMap(item =>
+      item.addOns?.map(addOn => addOn._id.toString()) || []
+    );
+
+    const uniqueAddOnIds = [...new Set(allAddOnIds)];
+
+    // Step 2: Fetch only in-stock add-ons with selected fields
+    const addOns = await Listing.find({
+      _id: { $in: uniqueAddOnIds },
+      inStock: true
+    }).select("_id name description category discountedPrice originalPrice images owner isVeg");
+
+    res.status(200).json({ addOns });
+  } catch (error) {
+    console.error("Error fetching add-ons:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};;
 
 module.exports.getOTP = async (req, res) => {
   const { name, email, number } = req.body;
