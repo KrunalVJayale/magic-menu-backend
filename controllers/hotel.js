@@ -8,7 +8,7 @@ const Rider = require("../models/rider");
 const admin = require("../config/firebaseAdmin");
 const Listing = require("../models/itemListing");
 const PastOrder = require("../models/pastOrder");
-const moment = require("moment");
+const moment = require("moment-timezone");
 
 module.exports.getOTP = async (req, res) => {
   const { name, email, number } = req.body;
@@ -219,28 +219,40 @@ module.exports.toggleDuty = async (req, res) => {
 
     // Validate ID
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid or Missing ID" });
+      return res.status(400).json({ message: "Invalid or missing owner ID." });
     }
 
-    // Toggle onDuty status directly using $bit for efficiency
+    // Check for active live orders
+    const order = await LiveOrder.findOne({ hotel: id, status: "PENDING" });
+    if (order) {
+      return res
+        .status(403)
+        .json({
+          message: "Cannot toggle duty while pending orders are in progress.",
+        });
+    }
+
+    // Toggle isServing status
     const result = await Owner.updateOne({ _id: id }, [
       { $set: { isServing: { $not: "$isServing" } } },
     ]);
 
-    // Check if any document was modified
     if (result.modifiedCount === 0) {
       return res
         .status(404)
-        .json({ message: "User not found or status unchanged" });
+        .json({ message: "Owner not found or already in the desired state." });
     }
 
-    // Success response
     return res
       .status(200)
-      .json({ message: "Serving status updated successfully" });
+      .json({ message: "Serving status toggled successfully." });
   } catch (e) {
     console.error("Error at toggleDuty API:", e);
-    return res.status(500).json({ message: "Internal Server Error" });
+    return res
+      .status(500)
+      .json({
+        message: "An unexpected error occurred. Please try again later.",
+      });
   }
 };
 
@@ -1199,14 +1211,16 @@ module.exports.getBusinessReport = async (req, res) => {
 
   try {
     const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+    const TIMEZONE = "Asia/Kolkata";
 
-    const todayStart = moment().startOf("day").toDate();
-    const todayEnd = moment().endOf("day").toDate();
+    // IST boundaries for today and yesterday
+    const todayStart = moment().tz(TIMEZONE).startOf("day").toDate();
+    const todayEnd = moment().tz(TIMEZONE).endOf("day").toDate();
 
-    const yesterdayStart = moment().subtract(1, "day").startOf("day").toDate();
-    const yesterdayEnd = moment().subtract(1, "day").endOf("day").toDate();
+    const yesterdayStart = moment().tz(TIMEZONE).subtract(1, "day").startOf("day").toDate();
+    const yesterdayEnd = moment().tz(TIMEZONE).subtract(1, "day").endOf("day").toDate();
 
-    // Helper to get dynamic total from discountedPrice * quantity
+    // Helper to calculate total revenue
     const calculateRevenue = async (startDate, endDate) => {
       const result = await PastOrder.aggregate([
         {
@@ -1259,17 +1273,19 @@ module.exports.getOrderSummary = async (req, res) => {
 
   try {
     const hotelObjectId = new mongoose.Types.ObjectId(user_id);
-    const startOfToday = moment().startOf("day").toDate();
-    const endOfToday = moment().endOf("day").toDate();
+    const TIMEZONE = "Asia/Kolkata";
 
-    // Delivered today from PastOrder (use deliveredAt)
+    const startOfToday = moment().tz(TIMEZONE).startOf("day").toDate();
+    const endOfToday = moment().tz(TIMEZONE).endOf("day").toDate();
+
+    // Delivered orders from PastOrder using deliveredAt
     const deliveredCount = await PastOrder.countDocuments({
       hotel: hotelObjectId,
       status: "DELIVERED",
       deliveredAt: { $gte: startOfToday, $lte: endOfToday },
     });
 
-    // Pending orders placed today in LiveOrder (use createdAt)
+    // Pending orders from LiveOrder using createdAt
     const pendingCount = await LiveOrder.countDocuments({
       hotel: hotelObjectId,
       createdAt: { $gte: startOfToday, $lte: endOfToday },
@@ -1293,8 +1309,10 @@ module.exports.getTopSellingItems = async (req, res) => {
 
   try {
     const hotelObjectId = new mongoose.Types.ObjectId(user_id);
-    const startOfToday = moment().startOf("day").toDate();
-    const endOfToday = moment().endOf("day").toDate();
+    const TIMEZONE = "Asia/Kolkata";
+
+    const startOfToday = moment().tz(TIMEZONE).startOf("day").toDate();
+    const endOfToday = moment().tz(TIMEZONE).endOf("day").toDate();
 
     const result = await PastOrder.aggregate([
       {
@@ -1333,8 +1351,8 @@ module.exports.getTopSellingItems = async (req, res) => {
           _id: 0,
         },
       },
-      { $sort: { quantity: -1 } }, // Most sold first
-      { $limit: 5 }, // Optional: top 10
+      { $sort: { quantity: -1 } }, // Top-selling by quantity
+      { $limit: 5 }, // Top 5 items
     ]);
 
     res.status(200).json(result);
