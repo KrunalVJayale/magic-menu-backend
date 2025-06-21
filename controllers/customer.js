@@ -24,16 +24,16 @@ module.exports.data = async (req, res) => {
   // 1. Fetch the customer
   const customer = await Customer.findById(user_id);
   if (!customer) {
-    return res.status(404).json({ error: 'Customer not found' });
+    return res.status(404).json({ error: "Customer not found" });
   }
 
   // 2. Look for a default location
   const defaultLoc = Array.isArray(customer.location)
-    ? customer.location.find(loc => loc.isDefault)
+    ? customer.location.find((loc) => loc.isDefault)
     : null;
 
   // 3. Fetch all serving owners
-  const owners = await Owner.find({ isServing: true });
+  const owners = await Owner.find();
 
   // 4. If no default location, send the raw owners data
   if (!defaultLoc) {
@@ -44,7 +44,7 @@ module.exports.data = async (req, res) => {
   const { latitude: custLat, longitude: custLon } = defaultLoc;
 
   // 6. Compute delivery times per owner
-  const enrichedOwners = owners.map(ownerDoc => {
+  const enrichedOwners = owners.map((ownerDoc) => {
     const owner = ownerDoc.toObject();
     const { latitude: ownLat, longitude: ownLon } = owner.location || {};
 
@@ -60,7 +60,7 @@ module.exports.data = async (req, res) => {
     return {
       ...owner,
       distanceKm: Math.round(distanceKm),
-      deliveryTimeMin
+      deliveryTimeMin,
     };
   });
 
@@ -89,9 +89,7 @@ module.exports.hotelData = async (req, res) => {
       (loc) => loc.isDefault === true
     );
     if (!defaultLocation) {
-      return res
-        .status(200)
-        .send(hotelData);
+      return res.status(200).send(hotelData);
     }
 
     // Calculating distance and estimated time
@@ -123,15 +121,17 @@ module.exports.getAddOns = async (req, res) => {
   const { itemIds } = req.body;
 
   if (!Array.isArray(itemIds) || itemIds.length === 0) {
-    return res.status(400).json({ message: "itemIds must be a non-empty array" });
+    return res
+      .status(400)
+      .json({ message: "itemIds must be a non-empty array" });
   }
 
   try {
     // Step 1: Get addOn IDs from given listings
     const items = await Listing.find({ _id: { $in: itemIds } }, "addOns");
 
-    const allAddOnIds = items.flatMap(item =>
-      item.addOns?.map(addOn => addOn._id.toString()) || []
+    const allAddOnIds = items.flatMap(
+      (item) => item.addOns?.map((addOn) => addOn._id.toString()) || []
     );
 
     const uniqueAddOnIds = [...new Set(allAddOnIds)];
@@ -139,15 +139,17 @@ module.exports.getAddOns = async (req, res) => {
     // Step 2: Fetch only in-stock add-ons with selected fields
     const addOns = await Listing.find({
       _id: { $in: uniqueAddOnIds },
-      inStock: true
-    }).select("_id name description category discountedPrice originalPrice images owner isVeg");
+      inStock: true,
+    }).select(
+      "_id name description category discountedPrice originalPrice images owner isVeg"
+    );
 
     res.status(200).json({ addOns });
   } catch (error) {
     console.error("Error fetching add-ons:", error);
     res.status(500).json({ message: "Internal server error" });
   }
-};;
+};
 
 module.exports.getOTP = async (req, res) => {
   const { name, email, number } = req.body;
@@ -382,6 +384,14 @@ module.exports.updateAddress = async (req, res) => {
         message: "User not found",
       });
     }
+    const order = await LiveOrder.findOne({ customer: _id });
+    if (order) {
+      return res.status(400).json({
+        status: "Error",
+        message:
+          "Address update is disabled while an order is in progress. Please wait until the current order is delivered.",
+      });
+    }
 
     const addressIndex = existingUser.location.findIndex(
       (addr) => addr._id.toString() === addressId
@@ -476,6 +486,15 @@ module.exports.deleteAddress = async (req, res) => {
       return res.status(404).json({
         status: "Error",
         message: "User not found",
+      });
+    }
+
+    // Block deletion if a live order exists
+    const liveOrder = await LiveOrder.findOne({ customer: id });
+    if (liveOrder) {
+      return res.status(400).json({
+        status: "Error",
+        message: "Address cannot be deleted while an order is in progress.",
       });
     }
 
@@ -581,9 +600,10 @@ module.exports.liveOrder = async (req, res) => {
       order.customer.location[order.locationIndex];
 
     const distance = calculateDistance(lat1, lon1, lat2, lon2).toFixed(2);
-    const estimatedDeliveryTime = ((distance / 25) * 60 + order.preparationTime).toFixed(
-      2
-    ); // in minutes
+    const estimatedDeliveryTime = (
+      (distance / 25) * 60 +
+      order.preparationTime
+    ).toFixed(2); // in minutes
 
     let riderData = null;
     if (order.rider) {
@@ -834,7 +854,7 @@ module.exports.paymentConfirm = async (req, res) => {
         android: {
           notification: {
             sound: "magicmenu_zing_enhanced",
-            channelId: "custom-sound-channel", 
+            channelId: "custom-sound-channel",
             title: "🚨 Incoming Order Request!",
             body: "Someone’s hungry and counting on you. Tap to accept.⚡️",
           },
@@ -893,13 +913,11 @@ module.exports.paymentConfirm = async (req, res) => {
 
     await session.commitTransaction();
     session.endSession();
-    return res
-      .status(200)
-      .json({
-        status: "SUCCESS",
-        id: createdOrder._id,
-        message: "Order placed and riders notified",
-      });
+    return res.status(200).json({
+      status: "SUCCESS",
+      id: createdOrder._id,
+      message: "Order placed and riders notified",
+    });
   } catch (err) {
     await session.abortTransaction();
     session.endSession();

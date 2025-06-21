@@ -879,6 +879,17 @@ module.exports.updateListing = async (req, res) => {
       return res.status(400).json({ message: "Invalid item ID" });
     }
 
+    // ❌ Block update if item is part of a live order for this hotel
+    const liveOrderExists = await LiveOrder.findOne({
+      hotel: user_id,
+      "items.item": item_id,
+    });
+    if (liveOrderExists) {
+      return res.status(400).json({
+        message: "Cannot update listing while it is part of a live order.",
+      });
+    }
+
     // 🧾 Validate required fields
     const requiredFields = [
       "name",
@@ -1147,16 +1158,8 @@ module.exports.updateRestaurantProfile = async (req, res) => {
     const { user_id } = req.params;
 
     // Get the updated data from request body
-    const {
-      name,
-      email,
-      number,
-      hotel,
-      description,
-      chef,
-      isVeg,
-      logo,
-    } = req.body;
+    const { name, email, number, hotel, description, chef, isVeg, logo } =
+      req.body;
 
     // Find the restaurant owner by ID
     const restaurant = await Owner.findById(user_id);
@@ -1182,7 +1185,9 @@ module.exports.updateRestaurantProfile = async (req, res) => {
 
     await restaurant.save();
 
-    res.status(200).json({ message: "Restaurant profile updated successfully" });
+    res
+      .status(200)
+      .json({ message: "Restaurant profile updated successfully" });
   } catch (error) {
     console.error("Error updating restaurant profile:", error);
     res.status(500).json({ message: "Internal Server Error" });
