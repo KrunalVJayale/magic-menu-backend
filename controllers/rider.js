@@ -658,7 +658,7 @@ module.exports.completeOrder = async (req, res) => {
         return {
           listingId: listing._id,
           name: listing.name,
-          price: listing.price,
+          price: listing.discountedPrice,
           quantity: orderItem.quantity,
         };
       })
