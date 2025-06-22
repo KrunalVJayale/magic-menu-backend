@@ -10,7 +10,7 @@ router.post('/login', wrapAsync(loginRoute));
 router.post("/getotp", wrapAsync(getOTP));
 router.post("/register", wrapAsync(registerData));
 router.post("/complete-profile", authMiddleware,wrapAsync(completeProfile));
-router.get('/verify-token',authMiddleware, wrapAsync(authToken));
+router.get('/verify-token/:user_id',authMiddleware, wrapAsync(authToken));
 router.get('/:id/toggleDuty',authMiddleware,wrapAsync(toggleDuty));
 router.get('/:user_id/get-new-orders',authMiddleware, wrapAsync(getNewOrders));
 router.get('/:user_id/get-ready-orders',authMiddleware, wrapAsync(getReadyOrders));

@@ -2,6 +2,7 @@ const Rider = require("../models/rider");
 const LiveOrder = require("../models/liveOrder");
 const Customer = require("../models/customer");
 const Owner = require("../models/owner");
+const Listing = require("../models/itemListing");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { sendEmail } = require("../utils/emailSender");
@@ -238,7 +239,7 @@ module.exports.newOrder = async (req, res) => {
 
     const liveOrders = await LiveOrder.find({
       restaurantStatus: { $in: ["ALMOST_READY", "READY"] },
-      status:"PREPARING",
+      status: "PREPARING",
     })
       .select("hotel customer locationIndex ticketNumber") // ✅ added ticketNumber
       .lean();
@@ -622,6 +623,7 @@ module.exports.getCompleteOrderData = async (req, res) => {
 };
 
 // Delivered Controller
+
 module.exports.completeOrder = async (req, res) => {
   const { order_id } = req.params;
   const { rider_id, otp } = req.body;
@@ -638,35 +640,60 @@ module.exports.completeOrder = async (req, res) => {
       return res.status(400).json({ message: "Invalid OTP" });
     }
 
-    // 3. Update status and deliveredAt
+    // 3. Fetch customer and get delivery address snapshot
+    const customer = await Customer.findById(liveOrder.customer);
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    const deliveryLocation = customer.location[liveOrder.locationIndex];
+    if (!deliveryLocation) {
+      return res.status(400).json({ message: "Invalid location index" });
+    }
+
+    // 4. Build denormalized items
+    const transformedItems = await Promise.all(
+      liveOrder.items.map(async (orderItem) => {
+        const listing = await Listing.findById(orderItem.item);
+        return {
+          listingId: listing._id,
+          name: listing.name,
+          price: listing.price,
+          quantity: orderItem.quantity,
+        };
+      })
+    );
+
+    // 5. Update status and deliveredAt
     liveOrder.status = "DELIVERED";
     liveOrder.deliveredAt = new Date();
 
-    // 4. Construct the past order object
+    // 6. Construct past order data
     const pastOrderData = {
       ticketNumber: liveOrder.ticketNumber,
       orderOtp: liveOrder.orderOtp,
-      status: liveOrder.status,
+      status: "DELIVERED",
       customer: liveOrder.customer,
       hotel: liveOrder.hotel,
       rider: liveOrder.rider,
-      locationIndex: liveOrder.locationIndex,
-      items: liveOrder.items,
+      deliveryAddress: deliveryLocation,
+      items: transformedItems,
       remarks: liveOrder.remarks,
       orderedAt: liveOrder.orderedAt,
       servedAt: liveOrder.servedAt,
       arrivedAt: liveOrder.arrivedAt,
       deliveredAt: liveOrder.deliveredAt,
       totalPrice: liveOrder.totalPrice,
+      payment: liveOrder.payment, // ✅ New addition
     };
 
-    // 5. Save to PastOrder collection
+    // 7. Save to PastOrder collection
     await new PastOrder(pastOrderData).save();
 
-    // 6. Delete the live order
+    // 8. Delete the live order
     await liveOrder.deleteOne();
 
-    // 7. Set rider as available
+    // 9. Set rider as available
     await Rider.findByIdAndUpdate(rider_id, {
       isAvailable: true,
       servingOrder: null,

@@ -24,10 +24,19 @@ const pastOrderSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "Rider",
     },
-    locationIndex: { type: Number, required: true },
+    deliveryAddress: {
+      title: { type: String, required: true },
+      latitude: { type: Number, required: true },
+      longitude: { type: Number, required: true },
+      houseNo: { type: Number, required: true },
+      buildingNo: { type: String, required: true },
+      landmark: { type: String },
+    },
     items: [
       {
-        item: { type: Schema.Types.ObjectId, ref: "Listing", required: true },
+        listingId: { type: Schema.Types.ObjectId, ref: "Listing" },
+        name: { type: String, required: true },
+        price: { type: Number, required: true },
         quantity: { type: Number, required: true },
       },
     ],
@@ -36,7 +45,7 @@ const pastOrderSchema = new Schema(
     servedAt: { type: Date },
     arrivedAt: { type: Date },
     deliveredAt: { type: Date },
-    totalPrice:{type:Number,required:true},
+    totalPrice: { type: Number, required: true },
   },
   { timestamps: true }
 );

@@ -664,19 +664,15 @@ module.exports.pastOrder = async (req, res) => {
     const data = await PastOrder.find({ customer: id })
       .populate({
         path: "hotel",
-        select: "hotel isServing location logo", // assuming hotel model has imageUrl field
-      })
-      .populate({
-        path: "items.item",
-        select: "name price",
+        select: "hotel isServing location logo"
       })
       .sort({ orderedAt: -1 }); // latest orders first
 
-    if (!data) {
-      return res.status(404).json({ message: "No live order found for you." });
+    if (!data || data.length === 0) {
+      return res.status(404).json({ message: "No past orders found for you." });
     }
 
-    // Calculate total price for each order
+    // Format data if needed (you can leave items as-is since they're already denormalized)
     const formattedData = data.map((order) => {
       return {
         _id: order._id,
@@ -685,17 +681,21 @@ module.exports.pastOrder = async (req, res) => {
         status: order.status,
         customer: order.customer,
         hotel: order.hotel,
-        items: order.items,
+        items: order.items, // already contains name, price, quantity
+        deliveryAddress: order.deliveryAddress, // now part of schema
         orderedAt: order.orderedAt,
-        totalPrice: order.totalPrice,
+        deliveredAt: order.deliveredAt,
+        totalPrice: order.totalPrice
       };
     });
+
     res.status(200).json(formattedData);
   } catch (error) {
     console.error("Error fetching past orders:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
 
 // Payment Route //
 module.exports.paymentInitiate = async (req, res) => {
@@ -830,6 +830,7 @@ module.exports.paymentConfirm = async (req, res) => {
       hotel: orderItems[0].restaurantId,
       items: orderItems.map((i) => ({ item: i._id, quantity: i.quantity })),
       totalPrice: amount,
+      payment:paymentId,
     };
     const [createdOrder] = await LiveOrder.create([orderData], { session });
 

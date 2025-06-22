@@ -210,7 +210,25 @@ module.exports.completeProfile = async (req, res) => {
 };
 
 module.exports.authToken = async (req, res) => {
-  res.status(200).json({ message: "User is validated Successfully." });
+  try {
+    const { user_id } = req.params;
+
+    // Validate user_id format
+    if (!mongoose.Types.ObjectId.isValid(user_id)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const user = await Owner.findById(user_id).select("isServing");
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.status(200).json(user);
+  } catch (error) {
+    console.error("Error in authToken:", error.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
 };
 
 module.exports.toggleDuty = async (req, res) => {
