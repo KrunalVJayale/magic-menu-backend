@@ -664,38 +664,39 @@ module.exports.pastOrder = async (req, res) => {
     const data = await PastOrder.find({ customer: id })
       .populate({
         path: "hotel",
-        select: "hotel isServing location logo"
+        select: "hotel isServing location logo",
       })
-      .sort({ orderedAt: -1 }); // latest orders first
+      .populate({
+        path: "payment",
+        select: "transactionId status amount createdAt",
+      })
+      .sort({ orderedAt: -1 });
 
     if (!data || data.length === 0) {
-      return res.status(404).json({ message: "No past orders found for you." });
+      return res.status(200).json({ message: "No past orders found for you." });
     }
 
-    // Format data if needed (you can leave items as-is since they're already denormalized)
-    const formattedData = data.map((order) => {
-      return {
-        _id: order._id,
-        ticketNumber: order.ticketNumber,
-        orderOtp: order.orderOtp,
-        status: order.status,
-        customer: order.customer,
-        hotel: order.hotel,
-        items: order.items, // already contains name, price, quantity
-        deliveryAddress: order.deliveryAddress, // now part of schema
-        orderedAt: order.orderedAt,
-        deliveredAt: order.deliveredAt,
-        totalPrice: order.totalPrice
-      };
-    });
+    const formattedData = data.map((order) => ({
+      _id: order._id,
+      ticketNumber: order.ticketNumber,
+      orderOtp: order.orderOtp,
+      status: order.status,
+      customer: order.customer,
+      hotel: order.hotel,
+      payment: order.payment, // now included
+      items: order.items,
+      deliveryAddress: order.deliveryAddress,
+      orderedAt: order.orderedAt,
+      deliveredAt: order.deliveredAt,
+      totalPrice: order.totalPrice,
+    }));
 
-    res.status(200).json(formattedData);
+    return res.status(200).json(formattedData);
   } catch (error) {
     console.error("Error fetching past orders:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ error: "Internal server error" });
   }
 };
-
 
 // Payment Route //
 module.exports.paymentInitiate = async (req, res) => {

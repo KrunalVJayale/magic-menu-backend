@@ -24,6 +24,7 @@ const pastOrderSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "Rider",
     },
+    payment: { type: Schema.Types.ObjectId, ref: "PaymentLog", required: true },
     deliveryAddress: {
       title: { type: String, required: true },
       latitude: { type: Number, required: true },
