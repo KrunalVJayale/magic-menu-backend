@@ -1,46 +1,52 @@
-if(process.env.NODE_ENV != "production"){
-    require('dotenv').config()
+if (process.env.NODE_ENV !== "production") {
+  require("dotenv").config();
 }
-// require("./utils/paymentCronJob"); // Load cron jobs
 
+const express = require("express");
+const http = require("http"); // ✅ Add this
+const connectDB = require("./config/connect");
+const socketManager = require("./socket"); // ✅ Add this
 
+const hotelRouter = require("./routes/hotel");
+const customerRouter = require("./routes/customer");
+const commonRouter = require("./routes/common");
+const riderRouter = require("./routes/rider");
+const adminRouter = require("./routes/admin");
 
-const express  = require('express');
-const connectDB = require('./config/connect');
-const hotelRouter = require('./routes/hotel');
-const customerRouter = require('./routes/customer');
-const commonRouter = require('./routes/common');
-const riderRouter = require('./routes/rider');
-
+const { startWeeklySettlementCron } = require("./cron/weeklySettlement");
 
 const app = express();
 app.use(express.json());
 
+// Routers
+app.use("/hotel", hotelRouter);
+app.use("/customer", customerRouter);
+app.use("/common", commonRouter);
+app.use("/rider", riderRouter);
+app.use("/admin", adminRouter);
 
-app.use('/hotel', hotelRouter);
-app.use('/customer', customerRouter);
-app.use('/common', commonRouter);
-app.use('/rider', riderRouter);
-
-
-app.get('/', (req, res) => {
-  res.status(200).send('Please visit www.magicmenu.in');
+// Default route
+app.get("/", (req, res) => {
+  res.status(200).send("Please visit www.magicmenu.in");
 });
 
 const start = async () => {
-    try {
-      await connectDB(process.env.MONGO_URI);
-  
-      // Uncomment this and comment below one if you want to run on ip address so that you can
-      // access api in physical device
-  
-      app.listen(process.env.PORT || 3000, "0.0.0.0", () =>{
-        // app.listen(process.env.PORT || 3000, ()=>{
-            console.log(`Server is on on PORT = ${process.env.PORT}`)
-        });
-    } catch (error) {
-      console.log(error);
-    }
-  };
+  try {
+    await connectDB(process.env.MONGO_URI);
+    startWeeklySettlementCron();
 
-start()
+    // ✅ Create HTTP server and pass to socket
+    const server = http.createServer(app);
+    socketManager.init(server); // 👈 Attach WebSocket
+
+    // ✅ Listen with HTTP server (not app.listen)
+    const PORT = process.env.PORT || 3000;
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Server running on PORT ${PORT}`);
+    });
+  } catch (error) {
+    console.error("❌ Server Startup Error:", error);
+  }
+};
+
+start();

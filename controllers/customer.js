@@ -700,18 +700,34 @@ module.exports.pastOrder = async (req, res) => {
 
 // Payment Route //
 module.exports.paymentInitiate = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { user_id, sub_Total } = req.body;
     const transaction_Id = generateTransactionID();
 
-    const mobile_Number = await Customer.findById(user_id, { number: 1 });
-    const payment_Data = await PaymentLog.create({
-      transactionId: transaction_Id,
-      status: "PENDING",
-      customer: user_id,
-      amount: sub_Total,
-    });
-    const payment_Id = payment_Data._id;
+    const customer = await Customer.findById(user_id, { number: 1 }).session(
+      session
+    );
+    if (!customer) throw new Error("Customer not found");
+
+    const payment_Data = await PaymentLog.create(
+      [
+        {
+          transactionId: transaction_Id,
+          status: "PENDING",
+          customer: user_id,
+          amount: sub_Total,
+        },
+      ],
+      { session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    const payment_Id = payment_Data[0]._id;
 
     return res.json({
       status: 200,
@@ -719,13 +735,15 @@ module.exports.paymentInitiate = async (req, res) => {
       merchant_Id: process.env.PHONEPE_MERCHANT_ID,
       transaction_Id,
       merchant_User_Id: process.env.PHONEPE_USER_ID,
-      mobile_Number,
+      mobile_Number: customer.number,
       environment: process.env.PHONEPE_ENVIRONMENT,
       salt_Index: process.env.PHONEPE_SALT_INDEX,
       salt_Key: process.env.PHONEPE_SALT_KEY,
       callback_Url: process.env.PHONEPE_CALLBACK_URL,
     });
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
     console.log("Error at payment initiate route:", error);
     res.status(500).json({ error: error.message });
   }
@@ -831,7 +849,7 @@ module.exports.paymentConfirm = async (req, res) => {
       hotel: orderItems[0].restaurantId,
       items: orderItems.map((i) => ({ item: i._id, quantity: i.quantity })),
       totalPrice: amount,
-      payment:paymentId,
+      payment: paymentId,
     };
     const [createdOrder] = await LiveOrder.create([orderData], { session });
 
@@ -915,6 +933,14 @@ module.exports.paymentConfirm = async (req, res) => {
 
     await session.commitTransaction();
     session.endSession();
+
+    const { getIO } = require("../socket"); // Adjust path if needed
+    const io = getIO();
+
+    io.to(`restaurant-${orderData.hotel}`).emit("orderRefresh");
+
+    io.to(`restaurant-${orderData.hotel}`).emit("orderRefresh");
+
     return res.status(200).json({
       status: "SUCCESS",
       id: createdOrder._id,

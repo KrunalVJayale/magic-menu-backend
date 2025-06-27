@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const {homeRoute, loginRoute, getOTP, registerData, completeProfile, authToken, getReadyOrders, getPickedUpOrders, getNewOrders, acceptOrder, readyOrder, almostReadyOrder, newOrder, toggleDuty, getRestaurantData, getRestaurantCategories, getCategoriesItems, changeListingStockStatus, addListing, changeListingRecommendStatus, addCategory, updateCategory, deleteCategory, updateListing, addAddOnCategory, getAddOnsCategories, deleteAddOnsCategory, getAddOnCategoriesItems, changeCategoryStatus, getRestaurantProfile, updateRestaurantProfile, getBusinessReport, getOrderSummary, getTopSellingItems } = require('../controllers/hotel');
+const {homeRoute, loginRoute, getOTP, registerData, completeProfile, authToken, getReadyOrders, getPickedUpOrders, getNewOrders, acceptOrder, readyOrder, almostReadyOrder, newOrder, toggleDuty, getRestaurantData, getRestaurantCategories, getCategoriesItems, changeListingStockStatus, addListing, changeListingRecommendStatus, addCategory, updateCategory, deleteCategory, updateListing,  getAddOnCategoriesItems, changeCategoryStatus, getRestaurantProfile, updateRestaurantProfile, getBusinessReport, getOrderSummary, getTopSellingItems, getTodayOrders, getYesterdayOrders, getCustomOrders, getWeeklyRevenueReport, getRunningWeekOrders, getWeeklyPayoutsReport } = require('../controllers/hotel');
 const wrapAsync = require('../utils/wrapAsync');
 const authMiddleware = require('../utils/jwtAuth');
 
@@ -38,5 +38,12 @@ router.put('/:user_id/mark-category-unavailable',authMiddleware, wrapAsync(chang
 router.get('/:user_id/get-business-report',authMiddleware, wrapAsync(getBusinessReport));
 router.get('/:user_id/get-order-summary',authMiddleware, wrapAsync(getOrderSummary));
 router.get('/:user_id/get-top-sellings',authMiddleware, wrapAsync(getTopSellingItems));
+router.get('/:user_id/get-today-orders',authMiddleware, wrapAsync(getTodayOrders));
+router.get('/:user_id/get-yesterday-orders',authMiddleware, wrapAsync(getYesterdayOrders));
+router.get('/:user_id/get-running-week-orders',authMiddleware, wrapAsync(getRunningWeekOrders));
+router.post('/:user_id/get-custom-orders',authMiddleware, wrapAsync(getCustomOrders));
+router.get('/:user_id/get-weekly-revenue-report',authMiddleware, wrapAsync(getWeeklyRevenueReport));
+router.get('/:user_id/get-weekly-payouts-report',authMiddleware, wrapAsync(getWeeklyPayoutsReport));
+
 
 module.exports = router;

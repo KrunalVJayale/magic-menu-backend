@@ -8,7 +8,11 @@ const Rider = require("../models/rider");
 const admin = require("../config/firebaseAdmin");
 const Listing = require("../models/itemListing");
 const PastOrder = require("../models/pastOrder");
+const RestaurantSettlement = require("../models/restaurantSettlement");
 const moment = require("moment-timezone");
+
+
+
 
 module.exports.getOTP = async (req, res) => {
   const { name, email, number } = req.body;
@@ -243,11 +247,9 @@ module.exports.toggleDuty = async (req, res) => {
     // Check for active live orders
     const order = await LiveOrder.findOne({ hotel: id, status: "PENDING" });
     if (order) {
-      return res
-        .status(403)
-        .json({
-          message: "Cannot toggle duty while pending orders are in progress.",
-        });
+      return res.status(403).json({
+        message: "Cannot toggle duty while pending orders are in progress.",
+      });
     }
 
     // Toggle isServing status
@@ -266,11 +268,9 @@ module.exports.toggleDuty = async (req, res) => {
       .json({ message: "Serving status toggled successfully." });
   } catch (e) {
     console.error("Error at toggleDuty API:", e);
-    return res
-      .status(500)
-      .json({
-        message: "An unexpected error occurred. Please try again later.",
-      });
+    return res.status(500).json({
+      message: "An unexpected error occurred. Please try again later.",
+    });
   }
 };
 
@@ -543,20 +543,33 @@ module.exports.readyOrder = async (req, res) => {
       { new: true }
     ).populate("hotel", "hotel");
 
-    const restaurantName = updatedOrder?.hotel?.hotel || "A restaurant";
-
     if (!updatedOrder) {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    // Get all available riders with valid FCM tokens
-    const riders = await Rider.find({ onDuty: true, isAvailable: true });
-    const tokenEntries = [];
-    riders.forEach((r) => {
-      (r.fcmToken || []).forEach((t) => {
-        tokenEntries.push({ riderId: r._id, token: t });
+    const restaurantName = updatedOrder?.hotel?.hotel || "A restaurant";
+
+    let tokenEntries = [];
+
+    if (updatedOrder.rider) {
+      // ✅ Rider already assigned — send only to this rider
+      const assignedRider = await Rider.findById(updatedOrder.rider);
+      if (assignedRider?.fcmToken?.length) {
+        tokenEntries = assignedRider.fcmToken.map((token) => ({
+          riderId: assignedRider._id,
+          token,
+        }));
+      }
+    } else {
+      // ✅ No rider assigned — send to all available riders
+      const riders = await Rider.find({ onDuty: true, isAvailable: true });
+      riders.forEach((r) => {
+        (r.fcmToken || []).forEach((t) => {
+          tokenEntries.push({ riderId: r._id, token: t });
+        });
       });
-    });
+    }
+
     const allTokens = tokenEntries.map((e) => e.token);
 
     let sendRes = { successCount: 0, failureCount: 0, responses: [] };
@@ -577,7 +590,7 @@ module.exports.readyOrder = async (req, res) => {
           .messaging()
           .sendMulticast({ ...payload, tokens: allTokens });
       } else {
-        // Fallback one-by-one
+        // Fallback
         const results = await Promise.all(
           allTokens.map(async (token) => {
             try {
@@ -595,7 +608,7 @@ module.exports.readyOrder = async (req, res) => {
         };
       }
 
-      // Remove invalid tokens
+      // ✅ Remove invalid tokens
       const invalidMap = {};
       sendRes.responses.forEach((resp, idx) => {
         if (
@@ -634,17 +647,22 @@ module.exports.almostReadyOrder = async (req, res) => {
   }
 
   try {
-    const updatedOrder = await LiveOrder.findByIdAndUpdate(
-      order_id,
-      { restaurantStatus: "ALMOST_READY" },
-      { new: true }
-    ).populate("hotel", "hotel");
+    // Check the current order
+    const currentOrder = await LiveOrder.findById(order_id).populate("hotel", "hotel");
 
-    const restaurantName = updatedOrder?.hotel?.hotel || "A restaurant";
-
-    if (!updatedOrder) {
+    if (!currentOrder) {
       return res.status(404).json({ error: "Order not found" });
     }
+
+    if (currentOrder.restaurantStatus === "ALMOST_READY") {
+      return res.status(200).json({ message: "Already marked as ALMOST_READY" });
+    }
+
+    // Update status to ALMOST_READY
+    currentOrder.restaurantStatus = "ALMOST_READY";
+    await currentOrder.save();
+
+    const restaurantName = currentOrder.hotel?.hotel || "A restaurant";
 
     // Get all available riders with valid FCM tokens
     const riders = await Rider.find({ onDuty: true, isAvailable: true });
@@ -657,6 +675,7 @@ module.exports.almostReadyOrder = async (req, res) => {
     const allTokens = tokenEntries.map((e) => e.token);
 
     let sendRes = { successCount: 0, failureCount: 0, responses: [] };
+
     if (allTokens.length) {
       const payload = {
         android: {
@@ -670,11 +689,9 @@ module.exports.almostReadyOrder = async (req, res) => {
       };
 
       if (typeof admin.messaging().sendMulticast === "function") {
-        sendRes = await admin
-          .messaging()
-          .sendMulticast({ ...payload, tokens: allTokens });
+        sendRes = await admin.messaging().sendMulticast({ ...payload, tokens: allTokens });
       } else {
-        // Fallback one-by-one
+        // Fallback for older SDKs: send one-by-one
         const results = await Promise.all(
           allTokens.map(async (token) => {
             try {
@@ -692,7 +709,7 @@ module.exports.almostReadyOrder = async (req, res) => {
         };
       }
 
-      // Remove invalid tokens
+      // Remove invalid FCM tokens
       const invalidMap = {};
       sendRes.responses.forEach((resp, idx) => {
         if (
@@ -716,7 +733,7 @@ module.exports.almostReadyOrder = async (req, res) => {
       );
     }
 
-    return res.status(200).json({ status: "ALMOST_READY" });
+    return res.status(200).json({ status: "ALMOST_READY", notificationSent: sendRes.successCount });
   } catch (error) {
     console.error("Error updating order status:", error);
     return res.status(500).json({ error: "Internal server error" });
@@ -1231,14 +1248,22 @@ module.exports.getBusinessReport = async (req, res) => {
     const hotelObjectId = new mongoose.Types.ObjectId(user_id);
     const TIMEZONE = "Asia/Kolkata";
 
-    // IST boundaries for today and yesterday
+    // IST-based day boundaries (no utc())
     const todayStart = moment().tz(TIMEZONE).startOf("day").toDate();
     const todayEnd = moment().tz(TIMEZONE).endOf("day").toDate();
 
-    const yesterdayStart = moment().tz(TIMEZONE).subtract(1, "day").startOf("day").toDate();
-    const yesterdayEnd = moment().tz(TIMEZONE).subtract(1, "day").endOf("day").toDate();
+    const yesterdayStart = moment()
+      .tz(TIMEZONE)
+      .subtract(1, "day")
+      .startOf("day")
+      .toDate();
+    const yesterdayEnd = moment()
+      .tz(TIMEZONE)
+      .subtract(1, "day")
+      .endOf("day")
+      .toDate();
 
-    // Helper to calculate total revenue
+    // Revenue calculator
     const calculateRevenue = async (startDate, endDate) => {
       const result = await PastOrder.aggregate([
         {
@@ -1252,7 +1277,7 @@ module.exports.getBusinessReport = async (req, res) => {
         {
           $lookup: {
             from: "listings",
-            localField: "items.item",
+            localField: "items.listingId",
             foreignField: "_id",
             as: "itemData",
           },
@@ -1344,7 +1369,7 @@ module.exports.getTopSellingItems = async (req, res) => {
       {
         $lookup: {
           from: "listings",
-          localField: "items.item",
+          localField: "items.listingId", // ✅ fixed field
           foreignField: "_id",
           as: "itemData",
         },
@@ -1369,13 +1394,286 @@ module.exports.getTopSellingItems = async (req, res) => {
           _id: 0,
         },
       },
-      { $sort: { quantity: -1 } }, // Top-selling by quantity
-      { $limit: 5 }, // Top 5 items
+      { $sort: { quantity: -1 } },
+      { $limit: 5 },
     ]);
 
     res.status(200).json(result);
   } catch (error) {
     console.error("Error getting top selling items:", error.message);
     res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getTodayOrders = async (req, res) => {
+  const { user_id } = req.params;
+
+  try {
+    const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+    const TIMEZONE = "Asia/Kolkata";
+
+    const startOfToday = moment().tz(TIMEZONE).startOf("day").toDate();
+    const endOfToday = moment().tz(TIMEZONE).endOf("day").toDate();
+
+    const data = await PastOrder.find({
+      hotel: hotelObjectId,
+      orderedAt: { $gte: startOfToday, $lte: endOfToday },
+    })
+      .populate({
+        path: "payment",
+        select: "transactionId status amount createdAt",
+      })
+      .sort({ orderedAt: -1 });
+
+    const formattedData = data.map((order) => ({
+      _id: order._id,
+      ticketNumber: order.ticketNumber,
+      orderOtp: order.orderOtp,
+      status: order.status,
+      customer: order.customer,
+      payment: order.payment,
+      items: order.items,
+      deliveryAddress: order.deliveryAddress,
+      orderedAt: order.orderedAt,
+      deliveredAt: order.deliveredAt,
+      totalPrice: order.totalPrice,
+      // hotel is intentionally excluded
+    }));
+
+    return res.status(200).json(formattedData);
+  } catch (error) {
+    console.error("Error fetching today's orders:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getYesterdayOrders = async (req, res) => {
+  const { user_id } = req.params;
+
+  try {
+    const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+    const TIMEZONE = "Asia/Kolkata";
+
+    const endOfYesterday = moment().tz(TIMEZONE).startOf("day").toDate(); // Today 00:00
+    const startOfYesterday = moment(endOfYesterday).subtract(1, "day").toDate(); // Yesterday 00:00
+
+    const data = await PastOrder.find({
+      hotel: hotelObjectId,
+      orderedAt: { $gte: startOfYesterday, $lt: endOfYesterday },
+    })
+      .populate({
+        path: "payment",
+        select: "transactionId status amount createdAt",
+      })
+      .sort({ orderedAt: -1 });
+
+    const formattedData = data.map((order) => ({
+      _id: order._id,
+      ticketNumber: order.ticketNumber,
+      orderOtp: order.orderOtp,
+      status: order.status,
+      customer: order.customer,
+      payment: order.payment,
+      items: order.items,
+      deliveryAddress: order.deliveryAddress,
+      orderedAt: order.orderedAt,
+      deliveredAt: order.deliveredAt,
+      totalPrice: order.totalPrice,
+    }));
+
+    return res.status(200).json(formattedData);
+  } catch (error) {
+    console.error("Error fetching yesterday's orders:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getRunningWeekOrders = async (req, res) => {
+  const { user_id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(user_id)) {
+    return res.status(400).json({ error: "Invalid user ID" });
+  }
+
+  try {
+    const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+    const TIMEZONE = "Asia/Kolkata";
+    const now = moment.tz(TIMEZONE);
+
+    // Calculate current running week: Thursday (start) to Wednesday (end)
+    const currentDay = now.day(); // 0 = Sunday
+    const daysSinceThursday = (currentDay + 3) % 7;
+    const weekStart = now
+      .clone()
+      .subtract(daysSinceThursday, "days")
+      .startOf("day");
+    const weekEnd = weekStart.clone().add(6, "days").endOf("day");
+
+    // Fetch orders within this range
+    const data = await PastOrder.find({
+      hotel: hotelObjectId,
+      orderedAt: { $gte: weekStart.toDate(), $lte: weekEnd.toDate() },
+    })
+      .populate({
+        path: "payment",
+        select: "transactionId status amount createdAt",
+      })
+      .sort({ orderedAt: -1 });
+
+    const formattedData = data.map((order) => ({
+      _id: order._id,
+      ticketNumber: order.ticketNumber,
+      orderOtp: order.orderOtp,
+      status: order.status,
+      customer: order.customer,
+      payment: order.payment,
+      items: order.items,
+      deliveryAddress: order.deliveryAddress,
+      orderedAt: order.orderedAt,
+      deliveredAt: order.deliveredAt,
+      totalPrice: order.totalPrice,
+    }));
+
+    return res.status(200).json(formattedData);
+  } catch (error) {
+    console.error("Error fetching running week orders:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getCustomOrders = async (req, res) => {
+  const { user_id } = req.params;
+  const { startDate, endDate } = req.body;
+
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: "Start and end date required" });
+  }
+
+  try {
+    const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+    const TIMEZONE = "Asia/Kolkata";
+
+    // Convert incoming dates to timezone-aware moments
+    const start = moment.tz(startDate, TIMEZONE).startOf("day").toDate();
+    const end = moment.tz(endDate, TIMEZONE).endOf("day").toDate();
+
+    const data = await PastOrder.find({
+      hotel: hotelObjectId,
+      orderedAt: { $gte: start, $lte: end },
+    })
+      .populate({
+        path: "payment",
+        select: "transactionId status amount createdAt",
+      })
+      .sort({ orderedAt: -1 });
+
+    const formattedData = data.map((order) => ({
+      _id: order._id,
+      ticketNumber: order.ticketNumber,
+      orderOtp: order.orderOtp,
+      status: order.status,
+      customer: order.customer,
+      payment: order.payment,
+      items: order.items,
+      deliveryAddress: order.deliveryAddress,
+      orderedAt: order.orderedAt,
+      deliveredAt: order.deliveredAt,
+      totalPrice: order.totalPrice,
+    }));
+
+    return res.status(200).json(formattedData);
+  } catch (error) {
+    console.error("Error fetching custom range orders:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getWeeklyRevenueReport = async (req, res) => {
+  const { user_id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(user_id)) {
+    return res.status(400).json({ error: "Invalid user ID" });
+  }
+
+  try {
+    const hotelObjectId = new mongoose.Types.ObjectId(user_id);
+    const TIMEZONE = "Asia/Kolkata";
+    const now = moment.tz(TIMEZONE);
+
+    // ✅ Calculate last Thursday 12:00 AM
+    const currentDay = now.day(); // 0 = Sunday
+    const daysSinceThursday = (currentDay + 3) % 7; // Distance from Thursday
+    const weekStart = now
+      .clone()
+      .subtract(daysSinceThursday, "days")
+      .startOf("day");
+
+    // ✅ Calculate Wednesday 11:59:59 PM (end of the 7-day window)
+    const weekEnd = weekStart.clone().add(6, "days").endOf("day");
+
+    // ✅ Fetch all delivered orders in that window
+    const orders = await PastOrder.find({
+      hotel: hotelObjectId,
+      status: "DELIVERED",
+      orderedAt: {
+        $gte: weekStart.toDate(),
+        $lte: weekEnd.toDate(),
+      },
+    });
+
+    // ✅ Calculate gross revenue
+    let grossRevenue = 0;
+    orders.forEach((order) => {
+      order.items.forEach((item) => {
+        grossRevenue += item.price * item.quantity;
+      });
+    });
+
+    const totalOrders = orders.length;
+
+    // ✅ Calculate commission and tax
+    const commissionRate = 0.2; // 20%
+    const gstRate = 0.18; // 18% on commission
+
+    const commissionAmount = parseFloat(
+      (grossRevenue * commissionRate).toFixed(2)
+    );
+    const taxOnCommission = parseFloat((commissionAmount * gstRate).toFixed(2));
+    const netRevenue = parseFloat(
+      (grossRevenue - commissionAmount - taxOnCommission).toFixed(2)
+    );
+
+    return res.status(200).json({
+      restaurantId: user_id,
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEnd.toISOString(),
+      totalOrders,
+      grossRevenue: parseFloat(grossRevenue.toFixed(2)),
+      commissionRate: 20,
+      commissionAmount,
+      taxOnCommission,
+      netRevenue,
+    });
+  } catch (error) {
+    console.error("Error generating weekly revenue report:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+module.exports.getWeeklyPayoutsReport = async (req, res) => {
+  try {
+    const hotelId = req.params.hotelId || req.user?.id; // Adjust based on how auth middleware works
+
+    if (!hotelId) {
+      return res.status(400).json({ message: "Missing hotel ID" });
+    }
+
+    const settlements = await RestaurantSettlement.find({ hotel: hotelId })
+      .sort({ weekStart: -1 }); // Most recent first
+
+    return res.status(200).json({ settlements });
+  } catch (error) {
+    console.error("❌ Error fetching weekly revenue report:", error.message);
+    return res.status(500).json({ message: "Failed to fetch weekly report" });
   }
 };
