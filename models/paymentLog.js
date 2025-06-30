@@ -2,10 +2,19 @@ const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
 const paymentLogSchema = new Schema({
-  transactionId: { type: String, required: true, unique: true },
+  transactionId: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  mode: {
+    type: String,
+    enum: ["COD", "ONLINE"],
+    required: true,
+  },
   status: {
     type: String,
-    enum: ["PENDING", "FAILURE", "SUCCESS"], // Example statuses
+    enum: ["PENDING", "SUCCESS", "FAILURE", "NOT_COLLECTED"],
     required: true,
   },
   customer: {
@@ -13,9 +22,18 @@ const paymentLogSchema = new Schema({
     ref: "Customer",
     required: true,
   },
-  amount: { type: Number, required: true },
+  amount: {
+    type: Number,
+    required: true,
+  },
   responsePayload: Object,
-  createdAt: { type: Date, default: Date.now },
+  isSettled: { type: Boolean, default: false },
+  settledAt: { type: Date },
+  settledBy: { type: Schema.Types.ObjectId, ref: "Admin" }, // ✅ new field added
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
 });
 
 const PaymentLog = mongoose.model("PaymentLog", paymentLogSchema);

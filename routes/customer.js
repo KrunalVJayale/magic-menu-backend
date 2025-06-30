@@ -16,14 +16,14 @@ const {
   pastOrder,
   paymentInitiate,
   paymentConfirm,
-  paymentWebhook,
   liveOrder,
   liveOrderStatus,
   liveOrderCancel,
   updateDefault,
   deleteAddress,
   registerFCM,
-  getAddOns
+  getAddOns,
+  codOrderConfirm
 } = require("../controllers/customer");
 const wrapAsync = require("../utils/wrapAsync");
 const authMiddleware = require("../utils/jwtAuth");
@@ -59,8 +59,8 @@ router.get("/:id/cancel/live-order", authMiddleware, wrapAsync(liveOrderCancel))
 // Payment Router
 router.post("/payment/initiate",authMiddleware,wrapAsync(paymentInitiate));
 router.post("/payment/confirm",authMiddleware,wrapAsync(paymentConfirm)); // Also customer order api 
-router.post("/payment/webhook",authMiddleware,wrapAsync(paymentWebhook));
-
+// router.post("/payment/webhook",authMiddleware,wrapAsync(paymentWebhook));
+router.post("/COD/order-confirm",authMiddleware,wrapAsync(codOrderConfirm)); // Customer COD order api 
 
 
 

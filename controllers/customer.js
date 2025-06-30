@@ -15,7 +15,6 @@ const {
   generateTicket,
 } = require("../utils/paymentUtils");
 const { calculateDistance } = require("../utils/mapUtils");
-const admin = require("../config/firebaseAdmin");
 // const { initiatePayment } = require("../utils/paymentHandler");
 
 module.exports.data = async (req, res) => {
@@ -113,7 +112,11 @@ module.exports.hotelData = async (req, res) => {
 
 module.exports.listingData = async (req, res) => {
   let { id, category } = req.params;
-  let data = await Listing.find({ owner: id, category: category });
+  let data = await Listing.find({
+    owner: id,
+    category: category,
+    inStock: true,
+  });
   return res.send(data);
 };
 
@@ -585,10 +588,15 @@ module.exports.liveOrder = async (req, res) => {
     const order = await LiveOrder.findOne({
       customer: id,
       _id: orderId,
-    }).populate({
-      path: "customer",
-      select: "-password", // Exclude password
-    });
+    })
+      .populate({
+        path: "customer",
+        select: "-password",
+      })
+      .populate({
+        path: "payment", // Send this directly as-is
+        select: "amount mode status", // You can add "transactionId" or others if needed
+      });
 
     if (!order) {
       return res.status(404).json({ message: "Live order not found." });
@@ -623,7 +631,6 @@ module.exports.liveOrder = async (req, res) => {
       rider: riderData,
     };
 
-    // ✅ Return an array with one object to keep frontend unchanged
     res.status(200).json([orderWithExtras]);
   } catch (error) {
     console.error("Error fetching live order:", error);
@@ -719,6 +726,7 @@ module.exports.paymentInitiate = async (req, res) => {
           status: "PENDING",
           customer: user_id,
           amount: sub_Total,
+          mode:'ONLINE'
         },
       ],
       { session }
@@ -749,67 +757,6 @@ module.exports.paymentInitiate = async (req, res) => {
   }
 };
 
-// module.exports.paymentConfirm = async (req, res) => {
-
-//   try {
-//     const { user_id, orderItems, paymentId, locationIndex } = req.body;
-//     let ticket = generateTicket();
-//     let otp = generateTicket();
-
-//     let payment_Data = await PaymentLog.findById(paymentId);
-//     if (payment_Data) {
-//       payment_Data.status = "SUCCESS";
-//       await payment_Data.save();
-//     } else {
-//       console.error("Payment record not found for ID:", paymentId);
-//       return res.status(500).json({
-//         status: "Failure",
-//         message: "Payment record not found for ID:",
-//       });
-//     }
-
-//     for (let item of orderItems) {
-//       let order = new LiveOrder({
-//         item: item._id,
-//         quantity: item.quantity,
-//         ticket: ticket,
-//         otp:otp,
-//         status: "Pending",
-//         customer: user_id,
-//         hotel: item.restaurantId,
-//         locationIndex:locationIndex,
-//       });
-
-//       await order.save();
-//     }
-
-//     return res.status(200).json({
-//       status: "SUCCESS",
-//       message: "Order placed successfully",
-//     });
-//   } catch (error) {
-//     console.error("Error at payment confirm route:", error);
-//     return res.status(500).json({ status: "Failure", message: error });
-//   }
-// };
-
-// // Secure webhook endpoint for receiving PhonePe updates
-// module.exports.paymentWebhook = async (req, res) => {
-//   // For production, add checksum verification here
-//   const { transactionId, status } = req.body;
-
-//   const existingLog = await PaymentLog.findOne({ transactionId });
-//   if (!existingLog) return res.status(400).json({ error: "Invalid transaction" });
-
-//   // Update the payment status in your logs
-//   existingLog.status = status;
-//   await existingLog.save();
-
-//   // Here, you could also update the related order in your database
-
-//   res.json({ message: "Webhook received" });
-// };
-
 module.exports.paymentConfirm = async (req, res) => {
   const session = await mongoose.startSession();
   try {
@@ -826,17 +773,21 @@ module.exports.paymentConfirm = async (req, res) => {
         .json({ status: "Failure", message: "Missing required fields" });
     }
 
-    session.startTransaction();
-
     // 1. Update payment status
     const paymentRecord = await PaymentLog.findByIdAndUpdate(
       paymentId,
       { status: "SUCCESS" },
-      { new: true, session }
+      { new: true }
     );
+    
     if (!paymentRecord) {
-      throw new Error(`Payment record not found: ${paymentId}`);
+      return res.status(404).json({
+        status: "Failure",
+        message: `Payment record not found: ${paymentId}`,
+      });
     }
+
+    session.startTransaction();
 
     // 2. Create live order
     const ticketNumber = generateTicket();
@@ -854,82 +805,82 @@ module.exports.paymentConfirm = async (req, res) => {
     const [createdOrder] = await LiveOrder.create([orderData], { session });
 
     // 3. Gather tokens
-    const riders = await Rider.find({ onDuty: true, isAvailable: true }, null, {
-      session,
-    });
-    const tokenEntries = [];
-    riders.forEach((r) =>
-      (r.fcmToken || []).forEach((t) =>
-        tokenEntries.push({ riderId: r._id, token: t })
-      )
-    );
-    const allTokens = tokenEntries.map((e) => e.token);
+    // const riders = await Rider.find({ onDuty: true, isAvailable: true }, null, {
+    //   session,
+    // });
+    // const tokenEntries = [];
+    // riders.forEach((r) =>
+    //   (r.fcmToken || []).forEach((t) =>
+    //     tokenEntries.push({ riderId: r._id, token: t })
+    //   )
+    // );
+    // const allTokens = tokenEntries.map((e) => e.token);
 
-    let sendRes = { successCount: 0, failureCount: 0, responses: [] };
-    if (allTokens.length) {
-      const payload = {
-        // notification: {
-        //   // imageUrl: 'https://res.cloudinary.com/dcgskimn8/image/upload/v1748271323/icon2_ksz1me.png',
-        // },
-        android: {
-          notification: {
-            sound: "magicmenu_zing_enhanced",
-            channelId: "custom-sound-channel",
-            title: "🚨 Incoming Order Request!",
-            body: "Someone’s hungry and counting on you. Tap to accept.⚡️",
-          },
-        },
-      };
+    // let sendRes = { successCount: 0, failureCount: 0, responses: [] };
+    // if (allTokens.length) {
+    //   const payload = {
+    //     // notification: {
+    //     //   // imageUrl: 'https://res.cloudinary.com/dcgskimn8/image/upload/v1748271323/icon2_ksz1me.png',
+    //     // },
+    //     android: {
+    //       notification: {
+    //         sound: "magicmenu_zing_enhanced",
+    //         channelId: "custom-sound-channel",
+    //         title: "🚨 Incoming Order Request!",
+    //         body: "Someone’s hungry and counting on you. Tap to accept.⚡️",
+    //       },
+    //     },
+    //   };
 
-      if (typeof admin.messaging().sendMulticast === "function") {
-        sendRes = await admin
-          .messaging()
-          .sendMulticast({ ...payload, tokens: allTokens });
-      } else {
-        // Fallback: send one-by-one with try/catch
-        const results = await Promise.all(
-          allTokens.map(async (token) => {
-            try {
-              await admin.messaging().send({ ...payload, token });
-              return { success: true };
-            } catch (error) {
-              return { success: false, error };
-            }
-          })
-        );
-        sendRes = {
-          successCount: results.filter((r) => r.success).length,
-          failureCount: results.filter((r) => !r.success).length,
-          responses: results,
-        };
-      }
+    //   if (typeof admin.messaging().sendMulticast === "function") {
+    //     sendRes = await admin
+    //       .messaging()
+    //       .sendMulticast({ ...payload, tokens: allTokens });
+    //   } else {
+    //     // Fallback: send one-by-one with try/catch
+    //     const results = await Promise.all(
+    //       allTokens.map(async (token) => {
+    //         try {
+    //           await admin.messaging().send({ ...payload, token });
+    //           return { success: true };
+    //         } catch (error) {
+    //           return { success: false, error };
+    //         }
+    //       })
+    //     );
+    //     sendRes = {
+    //       successCount: results.filter((r) => r.success).length,
+    //       failureCount: results.filter((r) => !r.success).length,
+    //       responses: results,
+    //     };
+    //   }
 
-      // 4. Clean invalid tokens
-      const invalidMap = {};
-      sendRes.responses.forEach((resp, idx) => {
-        if (
-          !resp.success &&
-          resp.error?.code &&
-          [
-            "messaging/invalid-registration-token",
-            "messaging/registration-token-not-registered",
-          ].includes(resp.error.code)
-        ) {
-          const { riderId, token } = tokenEntries[idx];
-          invalidMap[riderId] = invalidMap[riderId] || [];
-          invalidMap[riderId].push(token);
-        }
-      });
-      await Promise.all(
-        Object.entries(invalidMap).map(([rId, tokens]) =>
-          Rider.findByIdAndUpdate(
-            rId,
-            { $pull: { fcmToken: { $in: tokens } } },
-            { session }
-          )
-        )
-      );
-    }
+    //   // 4. Clean invalid tokens
+    //   const invalidMap = {};
+    //   sendRes.responses.forEach((resp, idx) => {
+    //     if (
+    //       !resp.success &&
+    //       resp.error?.code &&
+    //       [
+    //         "messaging/invalid-registration-token",
+    //         "messaging/registration-token-not-registered",
+    //       ].includes(resp.error.code)
+    //     ) {
+    //       const { riderId, token } = tokenEntries[idx];
+    //       invalidMap[riderId] = invalidMap[riderId] || [];
+    //       invalidMap[riderId].push(token);
+    //     }
+    //   });
+    //   await Promise.all(
+    //     Object.entries(invalidMap).map(([rId, tokens]) =>
+    //       Rider.findByIdAndUpdate(
+    //         rId,
+    //         { $pull: { fcmToken: { $in: tokens } } },
+    //         { session }
+    //       )
+    //     )
+    //   );
+    // }
 
     await session.commitTransaction();
     session.endSession();
@@ -984,5 +935,77 @@ module.exports.liveOrderCancel = async (req, res) => {
       status: "FAILURE",
       message: "An error occurred while cancelling the order",
     });
+  }
+};
+
+module.exports.codOrderConfirm = async (req, res) => {
+  const session = await mongoose.startSession();
+  try {
+    const { user_id, orderItems, locationIndex, amount } = req.body;
+
+    if (
+      !user_id ||
+      !orderItems?.length ||
+      locationIndex == null ||
+      !amount
+    ) {
+      return res
+        .status(400)
+        .json({ status: "Failure", message: "Missing required fields" });
+    }
+
+    session.startTransaction();
+
+    // 1. Create a PaymentLog entry with SUCCESS (COD)
+    const transactionId = generateTransactionID();
+    const [paymentLog] = await PaymentLog.create(
+      [
+        {
+          transactionId,
+          status: "NOT_COLLECTED",
+          customer: user_id,
+          amount,
+          mode: "COD",
+        },
+      ],
+      { session }
+    );
+
+    // 2. Create LiveOrder
+    const ticketNumber = generateTicket();
+    const orderOtp = generateTicket();
+    const orderData = {
+      ticketNumber,
+      orderOtp,
+      customer: user_id,
+      locationIndex,
+      hotel: orderItems[0].restaurantId,
+      items: orderItems.map((i) => ({ item: i._id, quantity: i.quantity })),
+      totalPrice: amount,
+      payment: paymentLog._id,
+      paymentMode: "COD",
+    };
+
+    const [createdOrder] = await LiveOrder.create([orderData], { session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    // 3. Emit socket event to restaurant
+    const { getIO } = require("../socket");
+    const io = getIO();
+
+    io.to(`restaurant-${orderData.hotel}`).emit("orderRefresh");
+
+    return res.status(200).json({
+      status: "SUCCESS",
+      id: createdOrder._id,
+      message: "COD order placed successfully",
+    });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("COD order transaction aborted:", err);
+    return res.status(500).json({ status: "Failure", message: err.message });
   }
 };
