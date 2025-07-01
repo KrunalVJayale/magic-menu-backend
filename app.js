@@ -27,7 +27,32 @@ app.use("/admin", adminRouter);
 
 // Default route
 app.get("/", (req, res) => {
-  res.status(200).send("Please visit www.magicmenu.in");
+  res.status(200).send(`
+    <html>
+      <head>
+        <title>MagicMenu - Coming Soon</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 20%;
+            background-color: #f4f4f4;
+            color: #333;
+          }
+          h1 {
+            font-size: 3em;
+          }
+          p {
+            font-size: 1.5em;
+          }
+        </style>
+      </head>
+      <body>
+        <h1>🚧 Coming Soon!</h1>
+        <p>We're working hard to launch <strong>www.magicmenu.in</strong></p>
+      </body>
+    </html>
+  `);
 });
 
 const start = async () => {
