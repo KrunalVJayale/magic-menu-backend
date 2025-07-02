@@ -363,6 +363,10 @@ module.exports.changeStatus = async (req, res) => {
 
     // 2️⃣ Fetch customer FCM tokens
     const customer = await Customer.findById(updated.customer);
+    // Check if customer exists and has notifications enabled
+    if (!customer || !customer.notificationsEnabled) {
+      return; // ❌ Don't send notification
+    }
     let tokens = Array.isArray(customer.fcmToken) ? customer.fcmToken : [];
 
     // 3️⃣ Only notify on these two statuses

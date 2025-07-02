@@ -23,7 +23,8 @@ const {
   deleteAddress,
   registerFCM,
   getAddOns,
-  codOrderConfirm
+  codOrderConfirm,
+  toggleNotification
 } = require("../controllers/customer");
 const wrapAsync = require("../utils/wrapAsync");
 const authMiddleware = require("../utils/jwtAuth");
@@ -40,7 +41,8 @@ router.post("/register", wrapAsync(registerData));
 router.post("/login", wrapAsync(login));
 
 // Protected Routes (authentication required)
-router.get("/:id/profile", authMiddleware, wrapAsync(profile)); // Only authenticated users can access profile
+router.get("/:id/profile", authMiddleware, wrapAsync(profile));// Only authenticated users can access profile
+router.patch("/:id/profile/toggle-notification", authMiddleware, wrapAsync(toggleNotification)); 
 router.post('/:id/fcm-token',authMiddleware,wrapAsync(registerFCM));
 router.get("/:id/address", authMiddleware, wrapAsync(allAddress)); // Only authenticated users can access address data
 router.get("/:id/address/:addressId/update-default", authMiddleware, wrapAsync(updateDefault)); // Only authenticated users can access address data

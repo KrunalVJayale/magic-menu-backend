@@ -1,7 +1,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const Owner = require("../models/owner");
-const { default: mongoose } = require("mongoose");
+const { default: mongoose, set } = require("mongoose");
 const Listing = require("../models/itemListing");
 const LiveOrder = require("../models/liveOrder");
 const Customer = require("../models/customer");
@@ -9,6 +9,7 @@ const Category = require("../models/category");
 const PastOrder = require("../models/pastOrder");
 const PaymentLog = require("../models/paymentLog");
 const Rider = require("../models/rider");
+const EmailOtp = require("../models/emailOTP");
 const { sendEmail } = require("../utils/emailSender");
 const {
   generateTransactionID,
@@ -157,48 +158,10 @@ module.exports.getAddOns = async (req, res) => {
 module.exports.getOTP = async (req, res) => {
   const { name, email, number } = req.body;
 
-  const existingUser = await Customer.findOne({
-    $or: [{ email: email }, { number: number }], // Check for matching email or phone number
-  });
-
-  if (existingUser) {
-    return res.status(400).json({
-      status: "Error",
-      message: "User already registered with this email or phone number",
-    });
-  }
-
-  const otp = Math.floor(100000 + Math.random() * 900000);
-
-  const emailResponse = await sendEmail(name, email, otp);
-  if (emailResponse.status === 200) {
-    return res.status(200).json({
-      status: "Success",
-      message: "OTP created successfully and email sent",
-      otp: otp, // Include OTP in the response
-    });
-  } else {
-    return res.status(500).json({
-      status: "Error",
-      message: "OTP created, but failed to send email",
-    });
-  }
-};
-
-module.exports.registerData = async (req, res) => {
-  const { name, number, email, pass } = req.body;
-
-  // Check for missing fields
-  if (!name || !number || !email || !pass) {
-    return res
-      .status(400)
-      .json({ status: "Error", message: "Missing required fields" });
-  }
-
   try {
-    // Check if the email or phone number is already in use
+    // 1. Check if user already exists
     const existingUser = await Customer.findOne({
-      $or: [{ email: email }, { number: number }],
+      $or: [{ email }, { number }],
     });
 
     if (existingUser) {
@@ -208,25 +171,101 @@ module.exports.registerData = async (req, res) => {
       });
     }
 
-    // Hash the password before saving
-    const hashedPassword = await bcrypt.hash(pass, 10); // Hash with salt rounds = 10
+    // 2. Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Create a new user with hashed password
-    const newUser = new Customer({
-      name: name,
-      email: email,
-      number: number,
-      password: hashedPassword, // Store hashed password
+    // 3. Try to send OTP email first
+    const emailResponse = await sendEmail(name, email, otp);
+
+    if (emailResponse.status !== 200) {
+      return res.status(500).json({
+        status: "Error",
+        message: "Failed to send OTP email",
+      });
+    }
+
+    // 4. Only after successful email send, store OTP in DB
+    await EmailOtp.findOneAndUpdate(
+      { email },
+      { number, otp, createdAt: new Date() },
+      { upsert: true }
+    );
+
+    return res.status(200).json({
+      status: "Success",
+      message: "OTP sent to email successfully",
     });
 
-    // Save the user and await the operation
+  } catch (err) {
+    console.error("Error in getOTP:", err);
+    return res.status(500).json({
+      status: "Error",
+      message: "Something went wrong",
+    });
+  }
+};
+
+module.exports.registerData = async (req, res) => {
+  const { name, number, email, pass, otp } = req.body;
+
+  // 1. Check for missing fields
+  if (!name || !number || !email || !pass || !otp) {
+    return res
+      .status(400)
+      .json({ status: "Error", message: "Missing required fields" });
+  }
+
+  try {
+    // 2. Fetch OTP record
+    const otpRecord = await EmailOtp.findOne({ email });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        status: "Error",
+        message: "OTP expired or not requested",
+      });
+    }
+
+    if (otpRecord.otp !== otp) {
+      return res.status(400).json({
+        status: "Error",
+        message: "Invalid OTP",
+      });
+    }
+
+    // ✅ OTP verified, now delete the OTP record
+    await EmailOtp.deleteOne({ email });
+
+    // 3. Check if user already exists
+    const existingUser = await Customer.findOne({
+      $or: [{ email }, { number }],
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        status: "Error",
+        message: "User already registered with this email or phone number",
+      });
+    }
+
+    // 4. Hash password
+    const hashedPassword = await bcrypt.hash(pass, 10);
+
+    // 5. Save new user
+    const newUser = new Customer({
+      name,
+      email,
+      number,
+      password: hashedPassword,
+    });
+
     await newUser.save();
 
-    // Send a success response
     return res.status(201).json({
       status: "Success",
       message: "User registered successfully",
     });
+
   } catch (error) {
     console.error("Error in registerData:", error);
     return res.status(500).json({
@@ -293,8 +332,34 @@ module.exports.login = async (req, res) => {
 
 module.exports.profile = async (req, res) => {
   let { id } = req.params;
-  let data = await Customer.findById(id);
+  let data = await Customer.findById(id).select('name number email notificationsEnabled');
   res.send(data);
+};
+
+module.exports.toggleNotification = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const customer = await Customer.findById(id);
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    // Flip the existing value
+    const updatedCustomer = await Customer.findByIdAndUpdate(
+      id,
+      { notificationsEnabled: !customer.notificationsEnabled },
+      { new: true }
+    );
+
+    res.status(200).json({
+      message: "Notification preference updated",
+      notificationsEnabled: updatedCustomer.notificationsEnabled,
+    });
+  } catch (err) {
+    console.error("Error toggling notifications:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
 module.exports.registerFCM = async (req, res) => {
